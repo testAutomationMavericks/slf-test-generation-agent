@@ -1,4 +1,4 @@
-# Selfridges Test Management Agent Readme
+#
 
 > AI-powered QA test case generation platform — React + TypeScript, Claude AI, Jira · Confluence · Zephyr Scale via MCP, dual-mode Knowledge Base (local JSON or pgvector).
 
