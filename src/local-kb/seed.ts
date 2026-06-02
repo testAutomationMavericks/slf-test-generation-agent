@@ -23,8 +23,10 @@ async function seed() {
   logger.info('Ingesting Jira issues...');
 
   await db.addDocuments([
-    formatJiraDocument('DEMO-1', 'User Login with Email and Password', `
-Given a user is on the login page
+    formatJiraDocument({
+      key: 'DEMO-1',
+      summary: 'User Login with Email and Password',
+      description: `Given a user is on the login page
 When they enter a valid registered email and correct password
 Then they should be redirected to the dashboard
 
@@ -40,11 +42,15 @@ Given a user checks "Remember me"
 When they close and reopen the browser
 Then they should still be logged in (30 day token)
 
-Non-functional: Login response time < 500ms at p95. Passwords hashed with bcrypt (12 rounds).
-    `.trim(), { projectKey: 'DEMO', epic: 'DEMO-10', component: 'auth-service' }),
+Non-functional: Login response time < 500ms at p95. Passwords hashed with bcrypt (12 rounds).`,
+      components: [{ name: 'auth-service' }],
+      epic: { key: 'DEMO-10', summary: 'Authentication Epic' },
+    }),
 
-    formatJiraDocument('DEMO-2', 'Add Item to Shopping Basket', `
-Given a logged-in user is on a product page
+    formatJiraDocument({
+      key: 'DEMO-2',
+      summary: 'Add Item to Shopping Basket',
+      description: `Given a logged-in user is on a product page
 When they click "Add to Basket"
 Then the item should appear with quantity 1 and a success toast
 
@@ -59,11 +65,15 @@ Then they should see "Only 3 left in stock"
 Given a guest user adds an item and then logs in
 Then their basket should be merged with saved basket
 
-Edge: Out-of-stock items button disabled; variants require selection first
-    `.trim(), { projectKey: 'DEMO', epic: 'DEMO-11', component: 'basket-service' }),
+Edge: Out-of-stock items button disabled; variants require selection first`,
+      components: [{ name: 'basket-service' }],
+      epic: { key: 'DEMO-11', summary: 'Shopping Basket Epic' },
+    }),
 
-    formatJiraDocument('DEMO-3', 'Apply Discount Code at Checkout', `
-Given a user enters a valid discount code
+    formatJiraDocument({
+      key: 'DEMO-3',
+      summary: 'Apply Discount Code at Checkout',
+      description: `Given a user enters a valid discount code
 Then the discount is applied and total recalculated
 
 Given a user enters an expired code
@@ -75,11 +85,15 @@ Then they see "Spend £5 more to use this code"
 Given a code is already applied and user tries another
 Then they see "Only one discount code can be applied per order"
 
-Business rules: codes case-insensitive; cannot apply to sale items unless flagged; before delivery charges
-    `.trim(), { projectKey: 'DEMO', epic: 'DEMO-11', component: 'checkout-service' }),
+Business rules: codes case-insensitive; cannot apply to sale items unless flagged; before delivery charges`,
+      components: [{ name: 'checkout-service' }],
+      epic: { key: 'DEMO-11', summary: 'Shopping Basket Epic' },
+    }),
 
-    formatJiraDocument('DEMO-4', 'Password Reset via Email', `
-Given a user clicks "Forgot password" and enters their email
+    formatJiraDocument({
+      key: 'DEMO-4',
+      summary: 'Password Reset via Email',
+      description: `Given a user clicks "Forgot password" and enters their email
 Then they receive a reset email within 2 minutes
 And see "If this email is registered, you will receive reset instructions"
 
@@ -91,93 +105,105 @@ Then they see "This link has expired. Request a new one."
 
 New password rules: min 8 chars, uppercase, lowercase, number required
 
-Security: tokens single-use; all sessions invalidated on reset; no email enumeration
-    `.trim(), { projectKey: 'DEMO', epic: 'DEMO-10', component: 'auth-service' }),
+Security: tokens single-use; all sessions invalidated on reset; no email enumeration`,
+      components: [{ name: 'auth-service' }],
+      epic: { key: 'DEMO-10', summary: 'Authentication Epic' },
+    }),
   ]);
 
   // ── Confluence Pages ─────────────────────────────────────────────────────
   logger.info('Ingesting Confluence pages...');
 
   await db.addDocuments([
-    formatConfluenceDocument(
-      'page-auth-architecture',
-      'Authentication Service — Architecture',
-      `Technology: Node.js 22, Fastify, PostgreSQL, Redis, bcrypt (12 rounds), AWS SES.
+    formatConfluenceDocument({
+      id: 'page-auth-architecture',
+      title: 'Authentication Service — Architecture',
+      body: `Technology: Node.js 22, Fastify, PostgreSQL, Redis, bcrypt (12 rounds), AWS SES.
 Key endpoints: POST /auth/login, /auth/logout, /auth/refresh, /auth/password/reset/request, /auth/password/reset/confirm.
 Sessions: JWT access tokens (15 min), refresh tokens (30 days Redis), remember-me tokens (30 days PostgreSQL).
 Security: 5 failed logins → 15 min lockout per IP and per account. Reset tokens: single-use SHA-256 hash, 1hr TTL.
 Performance: p95 login < 500ms, p99 < 1000ms, session lookup < 10ms (Redis).
 All auth errors return HTTP 401 with generic message (no user enumeration).`,
-      { spaceKey: 'PLATFORM', pageType: 'architecture' }
-    ),
+      space: 'PLATFORM',
+    }),
 
-    formatConfluenceDocument(
-      'page-basket-architecture',
-      'Basket & Checkout Service — Architecture',
-      `Technology: Python 3.12, FastAPI, Redis (basket store), PostgreSQL (orders), promotions-service (gRPC), inventory-service (gRPC).
+    formatConfluenceDocument({
+      id: 'page-basket-architecture',
+      title: 'Basket & Checkout Service — Architecture',
+      body: `Technology: Python 3.12, FastAPI, Redis (basket store), PostgreSQL (orders), promotions-service (gRPC), inventory-service (gRPC).
 Basket TTL: 7 days for guests, indefinite for authenticated users.
 Key endpoints: GET/POST /basket, POST /basket/items, POST /basket/discount, POST /checkout/complete.
 Basket merge on login: identical items sum quantities; guest basket wins on conflict; guest basket deleted after merge.
 Promotions: gRPC call to promotions-service. Max one code per basket. Case-normalised before validation.
 Stock: soft reservation on checkout (15 min hold); hard confirm on payment. Pessimistic lock on last item.`,
-      { spaceKey: 'PLATFORM', pageType: 'architecture' }
-    ),
+      space: 'PLATFORM',
+    }),
   ]);
 
   // ── Existing Zephyr Test Cases ────────────────────────────────────────────
   logger.info('Ingesting Zephyr test cases...');
 
   await db.addDocuments([
-    formatZephyrDocument(
-      'DEMO-T1', 'Successful login with valid credentials',
-      `Objective: Verify user can log in with correct email and password.
-Precondition: User exists with email test@demo.com, password Test1234!
-Steps:
-1. Navigate to /login → Login page displayed
-2. Enter valid email and password → Fields populated
-3. Click Sign In → Redirected to /dashboard`,
-      { projectKey: 'DEMO', linkedIssue: 'DEMO-1', folder: 'Authentication/Login' }
-    ),
+    formatZephyrDocument({
+      key: 'DEMO-T1',
+      name: 'Successful login with valid credentials',
+      objective: 'Verify user can log in with correct email and password.',
+      precondition: 'User exists with email test@demo.com, password Test1234!',
+      linkedIssues: ['DEMO-1'],
+      steps: [
+        { description: 'Navigate to /login', expectedResult: 'Login page displayed' },
+        { description: 'Enter valid email and password', expectedResult: 'Fields populated' },
+        { description: 'Click Sign In', expectedResult: 'Redirected to /dashboard' },
+      ],
+    }),
 
-    formatZephyrDocument(
-      'DEMO-T2', 'Login fails with incorrect password',
-      `Objective: Verify correct error on wrong password.
-Steps:
-1. Enter valid email + wrong password → Fields populated
-2. Click Sign In → Error "Invalid email or password"; user stays on /login`,
-      { projectKey: 'DEMO', linkedIssue: 'DEMO-1', folder: 'Authentication/Login' }
-    ),
+    formatZephyrDocument({
+      key: 'DEMO-T2',
+      name: 'Login fails with incorrect password',
+      objective: 'Verify correct error on wrong password.',
+      linkedIssues: ['DEMO-1'],
+      steps: [
+        { description: 'Enter valid email + wrong password', expectedResult: 'Fields populated' },
+        { description: 'Click Sign In', expectedResult: 'Error "Invalid email or password"; user stays on /login' },
+      ],
+    }),
 
-    formatZephyrDocument(
-      'DEMO-T3', 'Account lockout after 5 failed login attempts',
-      `Objective: Verify lockout after 5 consecutive failures.
-Priority: Critical
-Steps:
-1. Attempt login with wrong password 5 times → each shows "Invalid email or password"
-2. Attempt 6th login → account locked message; lockout lasts 15 minutes
-3. Wait 15 min and try valid credentials → login succeeds`,
-      { projectKey: 'DEMO', linkedIssue: 'DEMO-1', folder: 'Authentication/Security' }
-    ),
+    formatZephyrDocument({
+      key: 'DEMO-T3',
+      name: 'Account lockout after 5 failed login attempts',
+      objective: 'Verify lockout after 5 consecutive failures.',
+      priority: { name: 'Critical' },
+      linkedIssues: ['DEMO-1'],
+      steps: [
+        { description: 'Attempt login with wrong password 5 times', expectedResult: 'Each shows "Invalid email or password"' },
+        { description: 'Attempt 6th login', expectedResult: 'Account locked message; lockout lasts 15 minutes' },
+        { description: 'Wait 15 min and try valid credentials', expectedResult: 'Login succeeds' },
+      ],
+    }),
 
-    formatZephyrDocument(
-      'DEMO-T4', 'Add single item to empty basket',
-      `Objective: Verify item added correctly with success message.
-Precondition: User logged in; basket empty; PROD-001 in stock.
-Steps:
-1. Navigate to product page → Add to Basket button enabled
-2. Click Add to Basket → Success toast; basket count = 1
-3. Navigate to /basket → PROD-001 shown, quantity 1, correct price`,
-      { projectKey: 'DEMO', linkedIssue: 'DEMO-2', folder: 'Basket/Add Item' }
-    ),
+    formatZephyrDocument({
+      key: 'DEMO-T4',
+      name: 'Add single item to empty basket',
+      objective: 'Verify item added correctly with success message.',
+      precondition: 'User logged in; basket empty; PROD-001 in stock.',
+      linkedIssues: ['DEMO-2'],
+      steps: [
+        { description: 'Navigate to product page', expectedResult: 'Add to Basket button enabled' },
+        { description: 'Click Add to Basket', expectedResult: 'Success toast; basket count = 1' },
+        { description: 'Navigate to /basket', expectedResult: 'PROD-001 shown, quantity 1, correct price' },
+      ],
+    }),
 
-    formatZephyrDocument(
-      'DEMO-T5', 'Quantity increments when adding duplicate item',
-      `Objective: Adding existing item increments qty instead of duplicating.
-Precondition: Basket has PROD-001 with quantity 1.
-Steps:
-1. Add PROD-001 again → Basket shows quantity 2 (not two lines)`,
-      { projectKey: 'DEMO', linkedIssue: 'DEMO-2', folder: 'Basket/Add Item' }
-    ),
+    formatZephyrDocument({
+      key: 'DEMO-T5',
+      name: 'Quantity increments when adding duplicate item',
+      objective: 'Adding existing item increments qty instead of duplicating.',
+      precondition: 'Basket has PROD-001 with quantity 1.',
+      linkedIssues: ['DEMO-2'],
+      steps: [
+        { description: 'Add PROD-001 again', expectedResult: 'Basket shows quantity 2 (not two lines)' },
+      ],
+    }),
   ]);
 
   // ── Previously Generated Test Cases ──────────────────────────────────────
@@ -203,7 +229,6 @@ Steps:
 Authentication fails gracefully. No SQL error in response. Injection has no effect.
     `.trim(), {
       jiraIssueKey: 'DEMO-1',
-      jiraEpic: 'DEMO-10',
       featureArea: 'authentication',
       component: 'auth-service',
       approvedBy: 'alice.smith',
