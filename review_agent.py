@@ -8,48 +8,59 @@ pr_num = os.environ["PR_NUMBER"]
 with open("diff.txt") as f:
     diff = f.read()[:12000]
 
-# Ask Claude to review
+# Ask Claude to review and decide
 msg = client.messages.create(
     model="claude-opus-4-5",
     max_tokens=1024,
     messages=[{
         "role": "user",
         "content": f"""You are a senior engineer reviewing a PR.
-Review this diff and give concise feedback on:
-- Bugs or logic errors
-- Security issues
-- Performance concerns
-- Code quality
+Review this diff and give concise feedback.
+
+Rules for your decision:
+- APPROVE if: code is correct, no bugs, no security issues, minor style comments are OK
+- REQUEST_CHANGES only if: there is a real bug, security vulnerability, or broken logic
+
+At the very end of your response, write either:
+VERDICT: APPROVE
+or
+VERDICT: REQUEST_CHANGES
 
 Diff:
-{diff}
-
-End with: APPROVE if ready to merge, or CHANGES NEEDED if not."""
+{diff}"""
     }]
 )
 
 review = msg.content[0].text
-verdict = "APPROVE" if "APPROVE" in review else "REQUEST_CHANGES"
 
-# Post review comment via GitHub API (no gh CLI needed)
+# Extract verdict reliably from the last line
+verdict = "REQUEST_CHANGES"
+for line in review.splitlines():
+    if "VERDICT: APPROVE" in line:
+        verdict = "APPROVE"
+        break
+    elif "VERDICT: REQUEST_CHANGES" in line:
+        verdict = "REQUEST_CHANGES"
+        break
+
 headers = {
     "Authorization": f"token {token}",
     "Accept": "application/vnd.github+json"
 }
 
-# Post a comment
+# Post comment with full review
 requests.post(
     f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments",
     headers=headers,
     json={"body": f"## Claude Code Review\n\n{review}"}
 )
 
-# Submit a formal review (approve or request changes)
+# Submit formal verdict
 requests.post(
     f"https://api.github.com/repos/{repo}/pulls/{pr_num}/reviews",
     headers=headers,
     json={
         "event": verdict,
-        "body": "Automated review by Claude"
+        "body": f"Claude verdict: {verdict}"
     }
 )
