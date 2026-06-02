@@ -33,15 +33,13 @@ Diff:
 
 review = msg.content[0].text
 
-# Extract verdict reliably from the last line
+# Extract verdict from the last matching line (Claude may reference verdicts earlier in prose)
 verdict = "REQUEST_CHANGES"
 for line in review.splitlines():
     if "VERDICT: APPROVE" in line:
         verdict = "APPROVE"
-        break
     elif "VERDICT: REQUEST_CHANGES" in line:
         verdict = "REQUEST_CHANGES"
-        break
 
 headers = {
     "Authorization": f"token {token}",
