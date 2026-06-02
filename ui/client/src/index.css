@@ -1,0 +1,275 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Selfridges Test Management — Brand Theme
+   Matches selfridges.com: black/white, Neue Haas Grotesk feel, yellow accent
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&family=DM+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ── Selfridges palette ───────────────────────────────────────────────── */
+  --sf-black:   #000000;
+  --sf-white:   #ffffff;
+  --sf-yellow:  #f0c040;   /* Selfridges yellow bag */
+  --sf-yellow2: #d4a820;
+  --sf-cream:   #f8f7f4;
+
+  /* ── Light UI — white body like selfridges.com ────────────────────────── */
+  --bg:      #ffffff;
+  --bg2:     #f4f3f0;
+  --bg3:     #eceae5;
+  --bg4:     #e0deda;
+  --bg5:     #dddcd8;
+
+  /* ── Borders ─────────────────────────────────────────────────────────── */
+  --border:  #c0bfb8;
+  --border2: #a0a098;
+  --border3: #b0afa8;
+
+  /* ── Text ────────────────────────────────────────────────────────────── */
+  --text:    #111111;
+  --text2:   #2a2a2a;
+  --text3:   #505050;
+
+  /* ── Accent & status ─────────────────────────────────────────────────── */
+  --accent:  var(--sf-yellow);
+  --accent2: var(--sf-yellow2);
+  --green:   #2a7a50;
+  --amber:   #8a4a00;
+  --red:     #7a1010;
+  --purple:  #5a3f80;
+  --cyan:    #1a6070;
+
+  /* ── Typography ──────────────────────────────────────────────────────── */
+  --serif: 'Cormorant Garamond', 'Times New Roman', serif;
+  --sans:  'DM Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono:  'DM Mono', 'Courier New', monospace;
+
+  /* ── Selfridges: no border-radius, sharp corners ─────────────────────── */
+  --radius:    0px;
+  --radius-sm: 0px;
+  --radius-lg: 2px;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; overflow: hidden; }
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+  font-weight: 300;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbars ────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 2px; height: 2px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border3); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BUTTONS — Selfridges style: square, uppercase, thin borders
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 20px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  white-space: nowrap;
+  text-decoration: none;
+  line-height: 1;
+}
+.btn:disabled { opacity: .3; cursor: not-allowed; pointer-events: none; }
+.btn:focus-visible { outline: 1px solid var(--sf-yellow); outline-offset: 2px; }
+
+/* Primary — Selfridges yellow */
+.btn-primary {
+  background: var(--sf-yellow);
+  color: var(--sf-black);
+  border-color: var(--sf-yellow);
+  font-weight: 700;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--sf-yellow2);
+  border-color: var(--sf-yellow2);
+}
+
+/* Secondary — white border, dark bg */
+.btn-secondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border2);
+}
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--text);
+  color: var(--sf-black);
+  background: var(--bg3);
+}
+
+/* Ghost */
+.btn-ghost {
+  background: transparent;
+  color: var(--text2);
+  border-color: transparent;
+}
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border2);
+}
+
+/* Success — green outline */
+.btn-success {
+  background: transparent;
+  color: var(--green);
+  border-color: rgba(61,153,112,.35);
+}
+.btn-success:hover:not(:disabled) {
+  background: rgba(61,153,112,.06);
+}
+
+/* Danger */
+.btn-danger {
+  background: transparent;
+  color: var(--red);
+  border-color: rgba(176,48,32,.3);
+}
+.btn-danger:hover:not(:disabled) {
+  background: rgba(176,48,32,.06);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CHIPS — very small, all-caps, architectural
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  font-size: 9px;
+  font-family: var(--mono);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  border: 1px solid;
+  border-radius: 0;
+}
+.chip-critical { color: #d04040; border-color: rgba(208,64,64,.35); background: rgba(208,64,64,.06); }
+.chip-high     { color: var(--red); border-color: rgba(176,48,32,.3); background: rgba(176,48,32,.05); }
+.chip-medium   { color: var(--amber); border-color: rgba(200,148,26,.35); background: rgba(200,148,26,.05); }
+.chip-low      { color: var(--text3); border-color: var(--border2); background: transparent; }
+.chip-green    { color: var(--green); border-color: rgba(61,153,112,.35); background: rgba(61,153,112,.05); }
+.chip-blue     { color: var(--sf-yellow); border-color: rgba(240,192,64,.3); background: rgba(240,192,64,.05); }
+.chip-purple   { color: var(--purple); border-color: rgba(122,95,160,.3); background: rgba(122,95,160,.05); }
+.chip-amber    { color: var(--amber); border-color: rgba(200,148,26,.35); background: rgba(200,148,26,.05); }
+.chip-red      { color: var(--red); border-color: rgba(176,48,32,.3); background: rgba(176,48,32,.05); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   INPUTS — sharp corners, minimal
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.input {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 0;
+  padding: 8px 12px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  outline: none;
+  width: 100%;
+  transition: border-color .15s;
+  letter-spacing: .02em;
+}
+.input:focus { border-color: var(--sf-yellow); }
+.input::placeholder { color: var(--text3); }
+.input[type='password'] { letter-spacing: .12em; }
+select.input option { background: var(--bg3); color: var(--text); }
+textarea.input { resize: vertical; line-height: 1.7; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TYPOGRAPHY HELPERS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.eyebrow {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  font-family: var(--sans);
+  color: var(--text3);
+}
+
+.headline {
+  font-family: var(--serif);
+  font-weight: 500;
+  letter-spacing: .02em;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TOGGLE — Selfridges-style rectangular
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.toggle {
+  width: 32px;
+  height: 16px;
+  background: var(--bg5);
+  border: 1px solid var(--border2);
+  border-radius: 0;
+  position: relative;
+  cursor: pointer;
+  transition: background .2s, border-color .2s;
+  flex-shrink: 0;
+}
+.toggle.on {
+  background: var(--sf-yellow);
+  border-color: var(--sf-yellow);
+}
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  background: var(--sf-white);
+  transition: transform .2s;
+}
+.toggle.on::after { transform: translateX(16px); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ANIMATIONS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid rgba(255,255,255,.12);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin .55s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+@keyframes spin    { to { transform: rotate(360deg); } }
+@keyframes blink   { 0%,100%{opacity:1} 50%{opacity:.15} }
+@keyframes slideUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+@keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+
+.animate-up { animation: slideUp .2s ease both; }
+.animate-in { animation: fadeIn .15s ease both; }
