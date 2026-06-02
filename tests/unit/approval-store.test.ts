@@ -37,7 +37,7 @@ function makeTestCase(id: number): ApprovalTestCase {
   };
 }
 
-function makeApproval(id: string, requestedAt = '2026-01-01T10:00:00.000Z'): ApprovalRequest {
+function makeApproval(id: string, requestedAt = new Date().toISOString()): ApprovalRequest {
   return {
     id,
     issueKey: 'DEMO-1',
@@ -115,8 +115,10 @@ describe('LocalApprovalStore — CRUD', () => {
   });
 
   test('loadAll sorts by requestedAt descending (newest first)', async () => {
-    await store.save(makeApproval('apr-older', '2026-01-01T08:00:00.000Z'));
-    await store.save(makeApproval('apr-newer', '2026-01-02T08:00:00.000Z'));
+    const older = new Date(Date.now() - 86_400_000).toISOString(); // 1 day ago
+    const newer = new Date().toISOString();
+    await store.save(makeApproval('apr-older', older));
+    await store.save(makeApproval('apr-newer', newer));
     const all = await store.loadAll();
     assert.equal(all[0].id, 'apr-newer');
     assert.equal(all[1].id, 'apr-older');
@@ -149,6 +151,16 @@ describe('LocalApprovalStore — CRUD', () => {
     assert.equal(loaded?.testCases.length, 2);
     assert.equal(loaded?.testCases[0].name, 'Test Case 1');
   });
+
+  test('treats corrupted JSON file as empty store', async () => {
+    if (!fs.existsSync(TEST_DIR)) fs.mkdirSync(TEST_DIR, { recursive: true });
+    fs.writeFileSync(TEST_FILE, '{ this is not valid json !!!');
+    const corrupt = new LocalApprovalStore(TEST_FILE);
+    const result = await corrupt.load('any-id');
+    assert.equal(result, null);
+    const all = await corrupt.loadAll();
+    assert.deepEqual(all, []);
+  });
 });
 
 // ─── createApprovalStore factory ─────────────────────────────────────────────
@@ -169,6 +181,8 @@ describe('createApprovalStore', () => {
   });
 
   test('returns PgApprovalStore when kbBackend is pgvector and databaseUrl set', () => {
+    // PgApprovalStore.connect() is async and non-blocking — the constructor returns
+    // immediately without awaiting the DB connection, so this is safe in CI with no DB.
     const store = createApprovalStore({
       filePath: TEST_FILE,
       databaseUrl: 'postgresql://localhost/db',
