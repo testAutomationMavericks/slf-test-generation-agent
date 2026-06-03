@@ -215,7 +215,7 @@ export function useAppState() {
   return {
     status, connecting, issues, selectedIssue, issueDetail,
     zephyrTests, sessionUploads, setSessionUploads,
-    generating, output, setOutput, engine, kbDocsFound,
+    generating, output, engine, kbDocsFound,
     kbStats, loadKBStats,
     reviewCases, setReviewCases, updateReviewCase,
     curApprovalId, approvalStatus,

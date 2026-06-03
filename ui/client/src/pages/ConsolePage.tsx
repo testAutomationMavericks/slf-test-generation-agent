@@ -137,14 +137,6 @@ export function ConsolePage({ state }: Props) {
             <button className="btn btn-secondary" onClick={handleUpdate} disabled={noIssue || state.generating}>
               ↻ Update
             </button>
-            <button className="btn btn-ghost" onClick={() => { state.openReview(); setShowReview(true) }}
-              disabled={!state.output} style={{ marginLeft: 4 }}>
-              📋 Review
-            </button>
-            <button className="btn btn-ghost" onClick={() => state.setOutput('')}>
-              Clear
-            </button>
-
             {state.output && (
               <button className="btn btn-success" onClick={() => {
                 state.openReview()
