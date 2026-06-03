@@ -11,19 +11,14 @@ import * as path from 'path';
 import * as readline from 'readline';
 import { validateEnv } from './config.js';
 import { logger } from './logger.js';
-import {
-  isKBConfigured, loadKBConfig, retrieveContextForIssue, promptForApproval,
-} from './knowledge-base/index.js';
 import { MCPClients } from './types.js';
 
 const env = validateEnv();
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 const CLAUDE_MD_PATH = path.resolve(process.cwd(), 'CLAUDE.md');
-const baseSystemPrompt = fs.existsSync(CLAUDE_MD_PATH)
+const systemPrompt = fs.existsSync(CLAUDE_MD_PATH)
   ? fs.readFileSync(CLAUDE_MD_PATH, 'utf-8')
   : 'You are a QA engineer. Generate test cases from Jira, Confluence and Zephyr.';
-const kbEnabled = isKBConfigured();
-if (kbEnabled) logger.info('KB configured — context retrieval enabled');
 
 function extractIssueKey(text: string): string | undefined {
   return text.match(/\b([A-Z][A-Z0-9]+-\d+)\b/)?.[1];
@@ -53,20 +48,8 @@ async function createZephyrClient(): Promise<Client> {
   return client;
 }
 
-async function buildSystemPrompt(userMessage: string): Promise<string> {
-  if (!kbEnabled) return baseSystemPrompt;
-  const issueKey = extractIssueKey(userMessage);
-  if (!issueKey) return baseSystemPrompt;
-  try {
-    const kbConfig = loadKBConfig();
-    const kbContext = await retrieveContextForIssue(issueKey, issueKey.split('-')[0], undefined, kbConfig);
-    return kbContext ? `${baseSystemPrompt}\n\n---\n\n${kbContext}` : baseSystemPrompt;
-  } catch { return baseSystemPrompt; }
-}
-
 async function runAgent(clients: MCPClients, userMessage: string, history: Anthropic.MessageParam[] = []): Promise<string> {
   const tools = await getAllMCPTools(clients.atlassian, clients.zephyr);
-  const systemPrompt = await buildSystemPrompt(userMessage);
   const messages: Anthropic.MessageParam[] = [...history, { role: 'user', content: userMessage }];
 
   for (let i = 0; i < 10; i++) {
@@ -101,11 +84,10 @@ async function runAgent(clients: MCPClients, userMessage: string, history: Anthr
 async function runInteractive(clients: MCPClients): Promise<void> {
   const history: Anthropic.MessageParam[] = [];
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const approver = process.env.USER ?? 'user';
 
   console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('  Atlassian Test Agent — powered by Claude');
-  console.log(`  Jira · Confluence · Zephyr · KB(${kbEnabled ? 'on' : 'off'})`);
+  console.log('  Jira · Confluence · Zephyr');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
   const ask = () => rl.question('You: ', async (input) => {
@@ -117,10 +99,6 @@ async function runInteractive(clients: MCPClients): Promise<void> {
       history.push({ role: 'user', content: trimmed }, { role: 'assistant', content: response });
       if (history.length > 20) history.splice(0, 2);
       console.log('─'.repeat(60) + '\n' + response + '\n' + '─'.repeat(60) + '\n');
-      const issueKey = extractIssueKey(trimmed);
-      if (issueKey && kbEnabled && /generate|create|write|produce/i.test(trimmed)) {
-        await promptForApproval(response, issueKey, loadKBConfig(), approver);
-      }
     } catch (err) { console.error(`Error: ${err}`); }
     ask();
   });
@@ -134,7 +112,6 @@ async function runGenerate(clients: MCPClients, issueKey: string): Promise<void>
   const outputPath = path.resolve(process.cwd(), `test-cases-${issueKey}.md`);
   fs.writeFileSync(outputPath, response, 'utf-8');
   console.log(`\nSaved to ${outputPath}`);
-  if (kbEnabled) await promptForApproval(response, issueKey, loadKBConfig(), process.env.USER ?? 'cli');
 }
 
 async function main(): Promise<void> {
