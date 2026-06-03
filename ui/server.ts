@@ -685,6 +685,7 @@ async function checkClaudeCode(): Promise<{ available: boolean; version?: string
 app.get('/api/config', (_req, res) => {
   const safe = { ...config };
   const mask = '••••••••';
+  if (safe.jiraBearerToken) safe.jiraBearerToken = mask;
   if (safe.jiraApiToken) safe.jiraApiToken = mask;
   if (safe.confluenceApiToken) safe.confluenceApiToken = mask;
   if (safe.zephyrApiToken) safe.zephyrApiToken = mask;
@@ -701,6 +702,7 @@ app.post('/api/config', async (req, res) => {
   }
   config = {
     ...config, ...inc,
+    jiraBearerToken:    inc.jiraBearerToken    === mask ? config.jiraBearerToken    : (inc.jiraBearerToken    ?? config.jiraBearerToken),
     jiraApiToken:       inc.jiraApiToken       === mask ? config.jiraApiToken       : (inc.jiraApiToken       ?? config.jiraApiToken),
     confluenceApiToken: inc.confluenceApiToken === mask ? config.confluenceApiToken : (inc.confluenceApiToken ?? config.confluenceApiToken),
     zephyrApiToken:     inc.zephyrApiToken     === mask ? config.zephyrApiToken     : (inc.zephyrApiToken     ?? config.zephyrApiToken),
