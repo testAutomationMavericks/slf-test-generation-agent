@@ -6,6 +6,7 @@ dist/
 test-cases-*.md
 .DS_Store
 ui-config.json
+.mcp.json
 ui/**/*.js
 ui/**/*.js.map
 ui/**/*.d.ts
