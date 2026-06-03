@@ -534,7 +534,6 @@ async function runViaAPI(
 ---
 
 ${kbCtx}` : ''),
-        // @ts-ignore — cache_control is a beta field
         cache_control: { type: 'ephemeral' },
       },
       // Dynamic tail: the actual prompt
@@ -548,10 +547,8 @@ ${kbCtx}` : ''),
   for (let i = 0; i < 12; i++) {
     const response = await anthropic.messages.create({
       model: generationModel, max_tokens: 8096,
-      system: [], // system moved into cached user message prefix
+      system: [],
       messages, tools,
-      // @ts-ignore — prompt_caching is a beta feature
-      betas: ['prompt-caching-2024-07-31'],
     } as Anthropic.MessageCreateParamsNonStreaming);
 
     if (response.stop_reason === 'end_turn') {
