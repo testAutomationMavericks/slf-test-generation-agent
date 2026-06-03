@@ -63,6 +63,13 @@ export const api = {
     ),
   deleteApproval: (id: string) => req<{ ok: boolean }>('DELETE', `/api/approvals/${id}`),
 
+  testJira: () =>
+    fetch('/api/test/jira').then(r => r.json()) as Promise<{ ok: boolean; detail?: string; error?: string }>,
+  testConfluence: () =>
+    fetch('/api/test/confluence').then(r => r.json()) as Promise<{ ok: boolean; detail?: string; error?: string }>,
+  testZephyr: () =>
+    fetch('/api/test/zephyr').then(r => r.json()) as Promise<{ ok: boolean; detail?: string; error?: string }>,
+
   // Generate (SSE stream)
   generateStream: (issueKey: string | undefined, prompt: string): EventSource => {
     // POST with SSE requires fetch + ReadableStream (not EventSource)

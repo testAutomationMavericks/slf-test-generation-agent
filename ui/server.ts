@@ -105,8 +105,9 @@ export interface UIConfig {
   claudeMode?: string;
   // ── Atlassian ──────────────────────────────────────────────────────────────
   jiraUrl: string;
-  jiraUsername: string;
-  jiraApiToken: string;
+  jiraBearerToken: string;   // OAuth/PAT — when set, username not required
+  jiraUsername: string;      // Basic Auth only — leave blank when using bearerToken
+  jiraApiToken: string;      // Basic Auth only — leave blank when using bearerToken
   confluenceUrl: string;
   confluenceUsername: string;
   confluenceApiToken: string;
@@ -141,6 +142,7 @@ function loadConfig(): UIConfig {
     mode: 'mock',
     aiProvider: 'claudecode',
     jiraUrl: process.env.JIRA_URL ?? '',
+    jiraBearerToken: process.env.JIRA_BEARER_TOKEN ?? '',
     jiraUsername: process.env.JIRA_USERNAME ?? '',
     jiraApiToken: process.env.JIRA_API_TOKEN ?? '',
     confluenceUrl: process.env.CONFLUENCE_URL ?? '',
@@ -205,15 +207,22 @@ async function startMockClient(name: string, file: string): Promise<Client> {
 }
 
 async function startLiveAtlassian(): Promise<Client> {
-  const transport = new StdioClientTransport({
-    command: 'uvx', args: ['mcp-atlassian'],
-    env: {
-      ...process.env,
-      JIRA_URL: config.jiraUrl, JIRA_USERNAME: config.jiraUsername,
-      JIRA_API_TOKEN: config.jiraApiToken, CONFLUENCE_URL: config.confluenceUrl,
-      CONFLUENCE_USERNAME: config.confluenceUsername, CONFLUENCE_API_TOKEN: config.confluenceApiToken,
-    },
-  });
+  const usingBearer = !!config.jiraBearerToken;
+  const atlassianEnv: Record<string, string> = {
+    ...process.env as Record<string, string>,
+    JIRA_URL: config.jiraUrl,
+    CONFLUENCE_URL: config.confluenceUrl,
+  };
+  if (usingBearer) {
+    atlassianEnv.JIRA_PERSONAL_TOKEN = config.jiraBearerToken;
+    atlassianEnv.CONFLUENCE_PERSONAL_TOKEN = config.jiraBearerToken;
+  } else {
+    atlassianEnv.JIRA_USERNAME = config.jiraUsername;
+    atlassianEnv.JIRA_API_TOKEN = config.jiraApiToken;
+    atlassianEnv.CONFLUENCE_USERNAME = config.confluenceUsername;
+    atlassianEnv.CONFLUENCE_API_TOKEN = config.confluenceApiToken;
+  }
+  const transport = new StdioClientTransport({ command: 'uvx', args: ['mcp-atlassian'], env: atlassianEnv });
   const client = new Client({ name: 'atlassian-live', version: '1.0.0' });
   await client.connect(transport);
   return client;
@@ -250,7 +259,12 @@ function syncMCPJson() {
       'mcp-atlassian': {
         command: 'uvx',
         args: ['mcp-atlassian'],
-        env: {
+        env: config.jiraBearerToken ? {
+          JIRA_URL:                  config.jiraUrl,
+          JIRA_PERSONAL_TOKEN:       config.jiraBearerToken,
+          CONFLUENCE_URL:            config.confluenceUrl,
+          CONFLUENCE_PERSONAL_TOKEN: config.jiraBearerToken,
+        } : {
           JIRA_URL:              config.jiraUrl,
           JIRA_USERNAME:         config.jiraUsername,
           JIRA_API_TOKEN:        config.jiraApiToken,
@@ -798,6 +812,58 @@ app.get('/api/debug', async (_req, res) => {
 app.post('/api/connect', async (_req, res) => {
   try { await connectMCP(); res.json({ ok: true, mode: config.mode }); }
   catch (err) { res.status(500).json({ error: String(err) }); }
+});
+
+// ── Individual connectivity tests ────────────────────────────────────────────
+
+app.get('/api/test/jira', async (_req, res) => {
+  try {
+    const baseUrl = config.jiraUrl.replace(/\/$/, '');
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    if (config.jiraBearerToken) {
+      headers['Authorization'] = `Bearer ${config.jiraBearerToken}`;
+    } else {
+      const creds = Buffer.from(`${config.jiraUsername}:${config.jiraApiToken}`).toString('base64');
+      headers['Authorization'] = `Basic ${creds}`;
+    }
+    const r = await fetch(`${baseUrl}/rest/api/3/serverInfo`, { headers });
+    if (!r.ok) return res.json({ ok: false, error: `HTTP ${r.status} ${r.statusText}` });
+    const data = await r.json() as { serverTitle?: string; version?: string };
+    res.json({ ok: true, detail: `${data.serverTitle ?? 'Jira'} ${data.version ?? ''}`.trim() });
+  } catch (e: unknown) {
+    res.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.get('/api/test/confluence', async (_req, res) => {
+  try {
+    const baseUrl = config.confluenceUrl.replace(/\/$/, '');
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    if (config.jiraBearerToken) {
+      headers['Authorization'] = `Bearer ${config.jiraBearerToken}`;
+    } else {
+      const creds = Buffer.from(`${config.confluenceUsername}:${config.confluenceApiToken}`).toString('base64');
+      headers['Authorization'] = `Basic ${creds}`;
+    }
+    const r = await fetch(`${baseUrl}/rest/api/space?limit=1`, { headers });
+    if (!r.ok) return res.json({ ok: false, error: `HTTP ${r.status} ${r.statusText}` });
+    res.json({ ok: true, detail: 'Connected' });
+  } catch (e: unknown) {
+    res.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.get('/api/test/zephyr', async (_req, res) => {
+  try {
+    const baseUrl = config.zephyrBaseUrl.replace(/\/$/, '');
+    const r = await fetch(`${baseUrl}/projects?maxResults=1`, {
+      headers: { 'Authorization': `Bearer ${config.zephyrApiToken}`, 'Accept': 'application/json' },
+    });
+    if (!r.ok) return res.json({ ok: false, error: `HTTP ${r.status} ${r.statusText}` });
+    res.json({ ok: true, detail: 'Connected' });
+  } catch (e: unknown) {
+    res.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
 });
 
 // Jira

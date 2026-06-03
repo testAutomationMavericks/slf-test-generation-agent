@@ -82,6 +82,28 @@ function SelectInput({ value, onChange, options }: {
   )
 }
 
+function TestBtn({ label, onTest }: { label: string; onTest: () => Promise<{ ok: boolean; detail?: string; error?: string }> }) {
+  const [state, setState] = useState<{ ok: boolean; detail?: string; error?: string } | null>(null)
+  const [loading, setLoading] = useState(false)
+  const run = async () => {
+    setLoading(true); setState(null)
+    try { setState(await onTest()) } catch (e: unknown) { setState({ ok: false, error: String(e) }) }
+    finally { setLoading(false) }
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <button className="btn btn-secondary" onClick={run} disabled={loading} style={{ fontSize: 11, padding: '5px 12px' }}>
+        {loading ? <span className="spinner" /> : '⚡'} {label}
+      </button>
+      {state && (
+        <span style={{ fontSize: 11, fontFamily: 'var(--mono)', color: state.ok ? 'var(--green)' : 'var(--red)' }}>
+          {state.ok ? `✓ ${state.detail ?? 'OK'}` : `✗ ${state.error}`}
+        </span>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export function ConfigPage({ onSaved }: Props) {
   const [cfg, setCfg] = useState<Partial<UIConfig>>({})
@@ -291,25 +313,43 @@ export function ConfigPage({ onSaved }: Props) {
               <div style={S.divider} />
               <div style={S.section}>
                 <div style={S.label}>🟡 Jira + Confluence</div>
+
+                <div style={S.note('rgba(100,80,160,.3)', 'rgba(100,80,160,.04)')}>
+                  <strong>Bearer token</strong> (OAuth / PAT) — paste your token below and leave Username + API Token blank.<br />
+                  <strong>Basic auth</strong> — leave Bearer Token blank and fill in Username + API Token.
+                </div>
+
                 <div style={S.row}>
                   <Field label="Jira URL">
-                    <TextInput value={String(cfg.jiraUrl ?? '')} onChange={v => set('jiraUrl', v)} placeholder="https://your-company.atlassian.net" />
+                    <TextInput value={String(cfg.jiraUrl ?? '')} onChange={v => set('jiraUrl', v)} placeholder="https://api.atlassian.com/ex/jira/{cloudId}" />
                   </Field>
-                  <Field label="Username (email)">
-                    <TextInput value={String(cfg.jiraUsername ?? '')} onChange={v => set('jiraUsername', v)} placeholder="you@selfridges.com" />
+                  <Field label="Bearer Token (OAuth / PAT)">
+                    <TextInput value={String((cfg as any).jiraBearerToken ?? '')} onChange={v => set('jiraBearerToken' as any, v)} placeholder="Leave blank to use Basic Auth below" type="password" />
                   </Field>
                 </div>
+
                 <div style={S.row}>
-                  <Field label="Jira API Token">
-                    <TextInput value={String(cfg.jiraApiToken ?? '')} onChange={v => set('jiraApiToken', v)} placeholder="id.atlassian.com → Security → API tokens" type="password" />
+                  <Field label="Username / Email (Basic Auth only)">
+                    <TextInput value={String(cfg.jiraUsername ?? '')} onChange={v => set('jiraUsername', v)} placeholder="you@selfridges.com — not needed with Bearer" />
                   </Field>
+                  <Field label="Jira API Token (Basic Auth only)">
+                    <TextInput value={String(cfg.jiraApiToken ?? '')} onChange={v => set('jiraApiToken', v)} placeholder="Not needed with Bearer Token" type="password" />
+                  </Field>
+                </div>
+
+                <div style={S.row}>
                   <Field label="Confluence URL">
                     <TextInput value={String(cfg.confluenceUrl ?? '')} onChange={v => set('confluenceUrl', v)} placeholder="https://your-company.atlassian.net/wiki" />
                   </Field>
+                  <Field label="Confluence API Token (Basic Auth only)">
+                    <TextInput value={String(cfg.confluenceApiToken ?? '')} onChange={v => set('confluenceApiToken', v)} placeholder="Same token as Jira on Atlassian Cloud" type="password" />
+                  </Field>
                 </div>
-                <Field label="Confluence API Token">
-                  <TextInput value={String(cfg.confluenceApiToken ?? '')} onChange={v => set('confluenceApiToken', v)} placeholder="Same token as Jira on Atlassian Cloud" type="password" />
-                </Field>
+
+                <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                  <TestBtn label="Test Jira" onTest={() => api.testJira()} />
+                  <TestBtn label="Test Confluence" onTest={() => api.testConfluence()} />
+                </div>
 
                 <div style={{ marginTop: 20, marginBottom: 10 }}>
                   <div style={S.label}>🟢 Zephyr Scale</div>
@@ -321,6 +361,9 @@ export function ConfigPage({ onSaved }: Props) {
                   <Field label="Zephyr Base URL">
                     <TextInput value={String(cfg.zephyrBaseUrl ?? '')} onChange={v => set('zephyrBaseUrl', v)} placeholder="https://api.zephyrscale.smartbear.com/v2" />
                   </Field>
+                </div>
+                <div style={{ marginTop: 4 }}>
+                  <TestBtn label="Test Zephyr" onTest={() => api.testZephyr()} />
                 </div>
               </div>
             </>
