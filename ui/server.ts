@@ -111,6 +111,7 @@ export interface UIConfig {
   confluenceUrl: string;
   confluenceUsername: string;
   confluenceApiToken: string;
+  jiraProjectKey: string;
   zephyrApiToken: string;
   zephyrBaseUrl: string;
   // ── Anthropic ──────────────────────────────────────────────────────────────
@@ -148,6 +149,7 @@ function loadConfig(): UIConfig {
     confluenceUrl: process.env.CONFLUENCE_URL ?? '',
     confluenceUsername: process.env.CONFLUENCE_USERNAME ?? '',
     confluenceApiToken: process.env.CONFLUENCE_API_TOKEN ?? '',
+    jiraProjectKey: process.env.JIRA_PROJECT_KEY ?? '',
     zephyrApiToken: process.env.ZEPHYR_API_TOKEN ?? '',
     zephyrBaseUrl: process.env.ZEPHYR_BASE_URL ?? 'https://api.zephyrscale.smartbear.com/v2',
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
@@ -877,7 +879,10 @@ app.get('/api/jira/issues', async (req, res) => {
         return res.status(503).json({ error: 'MCP not connected: ' + String(connErr) });
       }
     }
-    const jql = (req.query.jql as string) || 'project = DEMO ORDER BY created DESC';
+    const defaultJql = config.jiraProjectKey
+      ? `project = ${config.jiraProjectKey} ORDER BY created DESC`
+      : 'ORDER BY created DESC';
+    const jql = (req.query.jql as string) || defaultJql;
     const result = await mcpClients.jira!.callTool({ name: 'jira_search', arguments: { jql, max_results: 30 } });
     const text = (result.content as Array<{text:string}>)[0]?.text ?? '[]';
     res.json(JSON.parse(text));
