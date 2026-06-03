@@ -141,7 +141,7 @@ export function ConsolePage({ state }: Props) {
               disabled={!state.output} style={{ marginLeft: 4 }}>
               📋 Review
             </button>
-            <button className="btn btn-ghost" onClick={() => { (state as any).setOutput?.('') ?? null }}>
+            <button className="btn btn-ghost" onClick={() => state.setOutput('')}>
               Clear
             </button>
 
