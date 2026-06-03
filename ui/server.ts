@@ -109,6 +109,7 @@ export interface UIConfig {
   jiraUsername: string;      // Basic Auth only — leave blank when using bearerToken
   jiraApiToken: string;      // Basic Auth only — leave blank when using bearerToken
   confluenceUrl: string;
+  confluenceSpaceKey: string;
   confluenceUsername: string;
   confluenceApiToken: string;
   jiraProjectKey: string;
@@ -147,6 +148,7 @@ function loadConfig(): UIConfig {
     jiraUsername: process.env.JIRA_USERNAME ?? '',
     jiraApiToken: process.env.JIRA_API_TOKEN ?? '',
     confluenceUrl: process.env.CONFLUENCE_URL ?? '',
+    confluenceSpaceKey: process.env.CONFLUENCE_SPACE_KEY ?? '',
     confluenceUsername: process.env.CONFLUENCE_USERNAME ?? '',
     confluenceApiToken: process.env.CONFLUENCE_API_TOKEN ?? '',
     jiraProjectKey: process.env.JIRA_PROJECT_KEY ?? '',
@@ -1195,8 +1197,9 @@ app.post('/api/generate', async (req, res) => {
       ? `Generate comprehensive test cases for Jira issue ${issueKey}.` +
         (contextBlock ? `\n\n${contextBlock}` : '') +
         `\n\nInstructions: Use the jira_get_issue, confluence_search, and ` +
-        `zephyr_get_test_cases_by_issue tools to gather any additional context, ` +
-        `then generate test cases covering all acceptance criteria, edge cases, ` +
+        `zephyr_get_test_cases_by_issue tools to gather any additional context. ` +
+        (config.confluenceSpaceKey ? `When calling confluence_search, filter to space key "${config.confluenceSpaceKey}" to find HLD, LLD, and technical design documents. ` : '') +
+        `Then generate test cases covering all acceptance criteria, edge cases, ` +
         `and negative tests. Avoid duplicating any test patterns already in the KB context above. ` +
         `Follow the structure in CLAUDE.md.`
       : 'Help me generate test cases.'

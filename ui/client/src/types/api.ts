@@ -14,6 +14,7 @@ export interface UIConfig {
   jiraUsername: string
   jiraApiToken: string
   confluenceUrl: string
+  confluenceSpaceKey: string
   confluenceUsername: string
   confluenceApiToken: string
   jiraProjectKey: string

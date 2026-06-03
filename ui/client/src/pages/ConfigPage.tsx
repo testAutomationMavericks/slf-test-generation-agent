@@ -348,9 +348,16 @@ export function ConfigPage({ onSaved }: Props) {
                   <Field label="Confluence URL">
                     <TextInput value={String(cfg.confluenceUrl ?? '')} onChange={v => set('confluenceUrl', v)} placeholder="https://your-company.atlassian.net/wiki" />
                   </Field>
+                  <Field label="Confluence Space Key">
+                    <TextInput value={String(cfg.confluenceSpaceKey ?? '')} onChange={v => set('confluenceSpaceKey', v)} placeholder="e.g. QAP or ENG" />
+                  </Field>
+                </div>
+
+                <div style={S.row}>
                   <Field label="Confluence API Token (Basic Auth only)">
                     <TextInput value={String(cfg.confluenceApiToken ?? '')} onChange={v => set('confluenceApiToken', v)} placeholder="Same token as Jira on Atlassian Cloud" type="password" />
                   </Field>
+                  <div />
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
