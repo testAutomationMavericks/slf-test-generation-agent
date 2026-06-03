@@ -324,7 +324,7 @@ export function ConfigPage({ onSaved }: Props) {
                     <TextInput value={String(cfg.jiraUrl ?? '')} onChange={v => set('jiraUrl', v)} placeholder="https://api.atlassian.com/ex/jira/{cloudId}" />
                   </Field>
                   <Field label="Bearer Token (OAuth / PAT)">
-                    <TextInput value={String((cfg as any).jiraBearerToken ?? '')} onChange={v => set('jiraBearerToken' as any, v)} placeholder="Leave blank to use Basic Auth below" type="password" />
+                    <TextInput value={String(cfg.jiraBearerToken ?? '')} onChange={v => set('jiraBearerToken', v)} placeholder="Leave blank to use Basic Auth below" type="password" />
                   </Field>
                 </div>
 

@@ -10,6 +10,7 @@ export interface UIConfig {
   mode: AppMode
   aiProvider: AIProvider
   jiraUrl: string
+  jiraBearerToken: string
   jiraUsername: string
   jiraApiToken: string
   confluenceUrl: string
