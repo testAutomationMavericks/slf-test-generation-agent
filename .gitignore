@@ -5,3 +5,8 @@ dist/
 *.log
 test-cases-*.md
 .DS_Store
+ui-config.json
+ui/**/*.js
+ui/**/*.js.map
+ui/**/*.d.ts
+ui/**/*.d.ts.map
