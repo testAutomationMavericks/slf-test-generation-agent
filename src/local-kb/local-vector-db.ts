@@ -7,20 +7,14 @@
  * Stores documents as JSON in ./local-kb-data/index.json
  * Uses cosine similarity over deterministic keyword-weighted vectors.
  *
- * API is intentionally identical to the Bedrock KB interface so you
- * can swap in production by changing one import:
- *
- *   // Local (dev/demo):
- *   import { LocalKnowledgeBase } from './local-kb/local-vector-db.js'
- *
- *   // Production (AWS):
- *   import { writeToKnowledgeBase, retrieveContextForIssue } from './knowledge-base/index.js'
+ * Implements the IKnowledgeBase interface — can be swapped for PgKnowledgeBase
+ * (Phase 2) by changing the import in ui/server.ts.
  */
 
 import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from '../logger.js';
-import { KBDocument, KBDocumentMetadata } from '../knowledge-base/types.js';
+import { KBDocument } from '../knowledge-base/types.js';
 
 // ─── Vector Dimension ─────────────────────────────────────────────────────────
 
@@ -161,7 +155,7 @@ export class LocalKnowledgeBase {
       vector,
       content: doc.content.slice(0, 8000),
       metadata: Object.fromEntries(
-        Object.entries({ id: doc.id, source: doc.source, ...doc.metadata })
+        Object.entries({ id: doc.id, ...doc.metadata })
           .map(([k, v]) => [k, String(v)])
       ),
     };
