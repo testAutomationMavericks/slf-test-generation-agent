@@ -803,7 +803,8 @@ async function directZephyrTestCases(issueKey: string): Promise<ZephyrTestCase[]
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
   try {
     const projectKey = config.jiraProjectKey || '';
-    const url = `${base}/testcases?projectKey=${projectKey}&issueKey=${issueKey}&maxResults=50`;
+    // Fetch up to 500 — issueKey filter is ignored by some Zephyr instances so we filter server-side
+    const url = `${base}/testcases?projectKey=${projectKey}&issueKey=${issueKey}&maxResults=500`;
     const r = await fetch(url, {
       headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
     });
@@ -812,8 +813,19 @@ async function directZephyrTestCases(issueKey: string): Promise<ZephyrTestCase[]
       return [];
     }
     const data = await r.json() as { values?: ZephyrTestCase[]; total?: number };
-    console.log(`[Zephyr] testcases for ${issueKey}: ${data.total ?? data.values?.length ?? 0} results`);
-    return data.values ?? [];
+    const all = data.values ?? [];
+
+    // Filter to only tests that belong to this issue.
+    // We label every generated test with the lowercase issueKey (e.g. "qap-2"),
+    // and Zephyr may also populate linkedIssues. Either signals ownership.
+    const issueKeyLower = issueKey.toLowerCase();
+    const filtered = all.filter(t =>
+      t.linkedIssues?.includes(issueKey) ||
+      t.labels?.some(l => l.toLowerCase() === issueKeyLower)
+    );
+
+    console.log(`[Zephyr] testcases for ${issueKey}: ${all.length} total, ${filtered.length} matched`);
+    return filtered;
   } catch { return []; }
 }
 
