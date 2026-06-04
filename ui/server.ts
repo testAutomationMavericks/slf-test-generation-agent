@@ -839,39 +839,34 @@ function mapZephyrPriority(priority: string): string {
 async function directZephyrSetIssueLink(testCaseKey: string, issueKey: string): Promise<void> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
 
-  // Attempt 1: POST /testcases/{key}/links with {issueKey} (SmartBear documented approach)
-  const postR = await fetch(`${base}/testcases/${testCaseKey}/links`, {
-    method: 'POST',
-    headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issueKey }),
-  });
-  const postBody = await postR.text().catch(() => '');
-  console.log(`  [Zephyr] POST /testcases/${testCaseKey}/links issueKey=${issueKey}: ${postR.status} ${postBody.slice(0, 200)}`);
-  if (postR.ok) return;
-
-  // Attempt 2: PATCH /testcases/{key} with just issueLinks (partial update)
-  const patchR = await fetch(`${base}/testcases/${testCaseKey}`, {
-    method: 'PATCH',
-    headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issueLinks: [issueKey] }),
-  });
-  const patchBody = await patchR.text().catch(() => '');
-  console.log(`  [Zephyr] PATCH /testcases/${testCaseKey} issueLinks=[${issueKey}]: ${patchR.status} ${patchBody.slice(0, 200)}`);
-  if (patchR.ok) return;
-
-  // Attempt 3: GET full test case then PUT with issueLinks merged in
+  // GET full test case — PUT requires all fields (id, key, priority, status, project)
   const getR = await fetch(`${base}/testcases/${testCaseKey}`, {
     headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
   });
   if (!getR.ok) { console.warn(`  [Zephyr] GET /testcases/${testCaseKey}: ${getR.status}`); return; }
   const tc = await getR.json() as Record<string, unknown>;
+
   const putR = await fetch(`${base}/testcases/${testCaseKey}`, {
     method: 'PUT',
     headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...tc, issueLinks: [issueKey] }),
   });
   const putBody = await putR.text().catch(() => '');
-  console.log(`  [Zephyr] PUT /testcases/${testCaseKey} issueLinks=[${issueKey}]: ${putR.status} ${putBody.slice(0, 200)}`);
+  console.log(`  [Zephyr] PUT /testcases/${testCaseKey} issueLinks=[${issueKey}]: ${putR.status}`);
+
+  // Verify the link was stored
+  if (putR.ok) {
+    const verifyR = await fetch(`${base}/testcases/${testCaseKey}/links`, {
+      headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
+    });
+    if (verifyR.ok) {
+      const links = await verifyR.json() as { issues?: Array<{issueKey?: string}> };
+      const stored = links.issues?.some(i => i.issueKey === issueKey);
+      console.log(`  [Zephyr] link verified: ${stored ? 'YES' : 'NO'} — issues: ${JSON.stringify(links.issues)}`);
+    }
+  } else {
+    console.warn(`  [Zephyr] PUT failed: ${putBody.slice(0, 200)}`);
+  }
 }
 
 async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ key?: string }> {
