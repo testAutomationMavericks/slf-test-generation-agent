@@ -1398,10 +1398,10 @@ app.post('/api/generate', async (req, res) => {
     issueKey
       ? `Generate comprehensive test cases for Jira issue ${issueKey}.\n\n` +
         `IMPORTANT: Do NOT use any MCP tools, make any tool calls, or fetch any external data. ` +
-        `All required context is pre-loaded below — generate test cases directly from it.\n\n` +
+        `Generate test cases directly from whatever context is provided below.\n\n` +
         (contextBlock
           ? `${contextBlock}\n\n`
-          : '') +
+          : `No additional context was retrieved. Generate test cases based on the issue key and any description above.\n\n`) +
         `Generate test cases covering all acceptance criteria, edge cases, and negative tests. ` +
         `Avoid duplicating any existing Zephyr tests or KB patterns listed above. ` +
         `Always number test cases starting from TC-001. ` +

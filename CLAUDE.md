@@ -12,8 +12,9 @@ Knowledge Base context) **before** invoking you. That data is embedded in the pr
 clearly labelled sections. **Generate test cases directly from that context — do not attempt
 to call any tools, MCP servers, or external APIs.**
 
-If no pre-fetched context is present in the prompt, generate test cases from whatever
-acceptance criteria or description is provided.
+If the pre-fetched sections are missing or incomplete, **generate test cases immediately from
+whatever is available in the prompt** (issue key, summary, description, or acceptance criteria).
+Never refuse or ask for more information — always produce a full test suite with what you have.
 
 ## Test Generation Workflow
 
