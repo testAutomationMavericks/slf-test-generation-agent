@@ -78,11 +78,11 @@ export const api = {
 }
 
 // Generate returns a ReadableStream (POST + SSE)
-export async function* generateStream(issueKey: string | undefined, prompt: string) {
+export async function* generateStream(issueKey: string | undefined, prompt: string, issueDetail?: unknown) {
   const res = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issueKey, prompt }),
+    body: JSON.stringify({ issueKey, prompt, issueDetail }),
   })
   if (!res.ok) throw new Error(await res.text())
   if (!res.body) throw new Error('No response body')

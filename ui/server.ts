@@ -1223,7 +1223,7 @@ app.post('/api/zephyr/create', async (req, res) => {
 // ─── Generate (SSE stream) ────────────────────────────────────────────────────
 
 app.post('/api/generate', async (req, res) => {
-  const { issueKey, prompt: customPrompt } = req.body as { issueKey?: string; prompt?: string };
+  const { issueKey, prompt: customPrompt, issueDetail: clientIssueDetail } = req.body as { issueKey?: string; prompt?: string; issueDetail?: JiraIssue };
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -1246,7 +1246,19 @@ app.post('/api/generate', async (req, res) => {
         issue.status ? `**Status:** ${issue.status.name}` : '',
         issue.labels?.length ? `**Labels:** ${issue.labels.join(', ')}` : '',
       ].filter(Boolean).join('\n');
-    } catch (e) { console.log(`  Jira fetch skipped: ${e}`); }
+    } catch (e) {
+      console.log(`  Jira fetch skipped: ${e}`);
+      // Fall back to the issue detail already loaded by the client
+      if (clientIssueDetail) {
+        issueContext = [
+          `**Summary:** ${clientIssueDetail.summary}`,
+          clientIssueDetail.description ? `**Description:**\n${clientIssueDetail.description}` : '',
+          clientIssueDetail.priority ? `**Priority:** ${clientIssueDetail.priority.name}` : '',
+          clientIssueDetail.status ? `**Status:** ${clientIssueDetail.status.name}` : '',
+        ].filter(Boolean).join('\n');
+        console.log(`  Jira fallback: using client-provided issueDetail for ${issueKey}`);
+      }
+    }
 
     try {
       const summary = issueContext.split('\n')[0].replace('**Summary:** ', '');

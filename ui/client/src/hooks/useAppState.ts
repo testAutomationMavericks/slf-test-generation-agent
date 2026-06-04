@@ -102,7 +102,7 @@ export function useAppState() {
 
     try {
       let full = ''
-      for await (const ev of generateStream(issueDetail.key, fullPrompt)) {
+      for await (const ev of generateStream(issueDetail.key, fullPrompt, issueDetail)) {
         if (ev.type === 'mode') setEngine(ev.engine ?? '')
         else if (ev.type === 'chunk') { full += ev.text ?? ''; setOutput(full) }
         else if (ev.type === 'kb_context') setKbDocsFound(ev.count ?? 0)
