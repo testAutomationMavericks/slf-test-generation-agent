@@ -914,6 +914,13 @@ async function directZephyrTestCases(issueKey: string): Promise<ZephyrTestCase[]
   } catch { return []; }
 }
 
+function mapZephyrPriority(priority: string): string {
+  const p = priority.toLowerCase();
+  if (p === 'critical' || p === 'high') return 'High';
+  if (p === 'low') return 'Low';
+  return 'Normal';
+}
+
 async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ key?: string }> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
   const r = await fetch(`${base}/testcases`, {
@@ -923,6 +930,32 @@ async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ k
   });
   if (!r.ok) throw new Error(`Zephyr create failed: ${r.status} ${r.statusText}`);
   return r.json() as Promise<{ key?: string }>;
+}
+
+async function directZephyrAddSteps(
+  testCaseKey: string,
+  steps: Array<{ description: string; expectedResult: string }>
+): Promise<void> {
+  const base = config.zephyrBaseUrl.replace(/\/$/, '');
+  const body = {
+    mode: 'OVERWRITE',
+    items: steps.map(s => ({
+      inline: {
+        description: s.description,
+        testData: '',
+        expectedResult: s.expectedResult,
+      },
+    })),
+  };
+  const r = await fetch(`${base}/testcases/${testCaseKey}/teststeps`, {
+    method: 'POST',
+    headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => '');
+    console.warn(`  Zephyr steps for ${testCaseKey}: ${r.status} ${text}`);
+  }
 }
 
 async function directZephyrLink(testCaseKey: string, issueKey: string): Promise<void> {
@@ -1143,21 +1176,18 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
   // 1. Upload each approved test to Zephyr
   for (const tc of toUpload) {
     try {
+      const steps = tc.steps?.length > 0
+        ? tc.steps
+        : [{ description: 'Execute as described', expectedResult: tc.outcome || 'Test passes' }];
       const payload: Record<string, unknown> = {
         projectKey: apr.projectKey,
         name: tc.name,
         objective: tc.content.slice(0, 500),
         precondition: tc.precondition || 'See test case details',
-        priority: tc.priority || 'Medium',
+        priority: mapZephyrPriority(tc.priority || 'Medium'),
         folder: apr.folder || 'Generated',
         labels: ['approved', 'test-agent', apr.issueKey.toLowerCase()],
         issueLinks: [apr.issueKey],
-        testScript: {
-          type: 'STEP_BY_STEP',
-          steps: tc.steps?.length > 0 ? tc.steps : [
-            { description: 'Execute as described', expectedResult: tc.outcome || 'Test passes' }
-          ],
-        },
       };
       const created = config.mode === 'mock'
         ? JSON.parse(((await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: payload })).content as Array<{text:string}>)[0]?.text ?? '{}').created
@@ -1165,6 +1195,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
       if (created?.key) {
         uploadedKeys.push(created.key);
         if (config.mode === 'live') {
+          await directZephyrAddSteps(created.key, steps);
           await directZephyrLink(created.key, apr.issueKey).catch(e =>
             console.warn(`  Zephyr link failed for ${created.key} → ${apr.issueKey}:`, e)
           );
@@ -1265,14 +1296,14 @@ app.post('/api/zephyr/create', async (req, res) => {
       projectKey, name,
       objective: objective?.slice(0, 500),
       precondition: precondition || '',
-      priority: priority || 'Medium',
+      priority: mapZephyrPriority(priority || 'Medium'),
       folder: folder || 'Generated',
       labels: labels || ['auto-generated'],
     };
-    if (steps && Array.isArray(steps) && steps.length > 0) {
-      payload.testScript = { type: 'STEP_BY_STEP', steps };
-    }
     const created = await directZephyrCreate(payload);
+    if (created?.key && steps && Array.isArray(steps) && steps.length > 0) {
+      await directZephyrAddSteps(created.key, steps);
+    }
     res.json({ created });
   } catch (err) { res.status(500).json({ error: String(err) }); }
 });
@@ -1312,11 +1343,14 @@ app.post('/api/generate', async (req, res) => {
     } catch (e) { console.log(`  Confluence fetch skipped: ${e}`); }
 
     try {
-      const existing = await directZephyrTestCases(issueKey);
+      const existing = (await directZephyrTestCases(issueKey))
+        .filter(t => t.status?.name?.toLowerCase() !== 'archived');
       if (existing.length > 0) {
         existingTestsContext = `Existing test cases (${existing.length}):\n` +
           existing.map(t => `- ${t.key}: ${t.name}`).join('\n');
         console.log(`  Zephyr: ${existing.length} existing tests found`);
+      } else {
+        console.log(`  Zephyr: no active tests found`);
       }
     } catch (e) { console.log(`  Zephyr fetch skipped: ${e}`); }
   } else if (issueKey && config.mode === 'mock') {
@@ -1368,6 +1402,7 @@ app.post('/api/generate', async (req, res) => {
           : '') +
         `Generate test cases covering all acceptance criteria, edge cases, and negative tests. ` +
         `Avoid duplicating any existing Zephyr tests or KB patterns listed above. ` +
+        `Always number test cases starting from TC-001 regardless of existing test numbers. ` +
         `Follow the structure in CLAUDE.md.`
       : 'Help me generate test cases.'
   );
