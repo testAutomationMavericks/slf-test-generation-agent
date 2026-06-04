@@ -21,7 +21,13 @@ export function ConsolePage({ state }: Props) {
     if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight
   }, [state.output])
 
-  const allZephyr = [...state.zephyrTests, ...state.sessionUploads]
+  const allZephyr = (() => {
+    const newKeys = new Set(state.sessionUploads.map(t => t.key))
+    return [
+      ...state.zephyrTests.filter(t => !newKeys.has(t.key)),
+      ...state.sessionUploads,
+    ]
+  })()
 
   const handleGenerate = async () => {
     setError('')
