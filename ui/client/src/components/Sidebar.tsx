@@ -66,7 +66,7 @@ export function Sidebar({ issues, selectedIssue, connecting, kbTotal, onSelect, 
             width: '100%', background: '#fff',
             border: '1px solid #c8c7c0', borderRadius: 0,
             padding: '8px 11px', color: '#111',
-            fontFamily: 'var(--mono)', fontSize: 13, outline: 'none',
+            fontFamily: 'var(--sans)', fontSize: 13, outline: 'none',
           }}
           placeholder="Filter issues…"
           value={filter}
@@ -147,6 +147,7 @@ export function Sidebar({ issues, selectedIssue, connecting, kbTotal, onSelect, 
               {/* Summary */}
               <div style={{
                 fontSize: 14, fontWeight: 400,
+                fontFamily: 'var(--sans)',
                 color: '#111',
                 lineHeight: 1.4,
                 overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
