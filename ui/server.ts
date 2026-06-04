@@ -891,11 +891,16 @@ async function directConfluenceSearch(query: string): Promise<string> {
   } catch { return ''; }
 }
 
+function zephyrAuthHeader(): string {
+  const token = config.zephyrApiToken.replace(/^Bearer\s+/i, '').trim();
+  return `Bearer ${token}`;
+}
+
 async function directZephyrTestCases(issueKey: string): Promise<ZephyrTestCase[]> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
   try {
     const r = await fetch(`${base}/testcases?issueKey=${issueKey}&maxResults=50`, {
-      headers: { 'Authorization': `Bearer ${config.zephyrApiToken}`, 'Accept': 'application/json' },
+      headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
     });
     if (!r.ok) return [];
     const data = await r.json() as { values?: ZephyrTestCase[] };
@@ -907,7 +912,7 @@ async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ k
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
   const r = await fetch(`${base}/testcases`, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${config.zephyrApiToken}`, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!r.ok) throw new Error(`Zephyr create failed: ${r.status} ${r.statusText}`);
@@ -918,7 +923,7 @@ async function directZephyrLink(testCaseKey: string, issueKey: string): Promise<
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
   await fetch(`${base}/testcases/${testCaseKey}/links`, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${config.zephyrApiToken}`, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ issueId: issueKey }),
   });
 }
@@ -963,7 +968,7 @@ app.get('/api/test/zephyr', async (_req, res) => {
   try {
     const baseUrl = config.zephyrBaseUrl.replace(/\/$/, '');
     const r = await fetch(`${baseUrl}/projects?maxResults=1`, {
-      headers: { 'Authorization': `Bearer ${config.zephyrApiToken}`, 'Accept': 'application/json' },
+      headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
     });
     if (!r.ok) {
       const body = await r.text().catch(() => '');
@@ -1136,9 +1141,12 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         priority: tc.priority || 'Medium',
         folder: apr.folder || 'Generated',
         labels: ['approved', 'test-agent', apr.issueKey.toLowerCase()],
-        steps: tc.steps?.length > 0 ? tc.steps : [
-          { description: 'Execute as described', expectedResult: tc.outcome || 'Test passes' }
-        ],
+        testScript: {
+          type: 'STEP_BY_STEP',
+          steps: tc.steps?.length > 0 ? tc.steps : [
+            { description: 'Execute as described', expectedResult: tc.outcome || 'Test passes' }
+          ],
+        },
       };
       const created = config.mode === 'mock'
         ? JSON.parse(((await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: payload })).content as Array<{text:string}>)[0]?.text ?? '{}').created
@@ -1250,7 +1258,9 @@ app.post('/api/zephyr/create', async (req, res) => {
       folder: folder || 'Generated',
       labels: labels || ['auto-generated'],
     };
-    if (steps && Array.isArray(steps) && steps.length > 0) payload.steps = steps;
+    if (steps && Array.isArray(steps) && steps.length > 0) {
+      payload.testScript = { type: 'STEP_BY_STEP', steps };
+    }
     const created = await directZephyrCreate(payload);
     res.json({ created });
   } catch (err) { res.status(500).json({ error: String(err) }); }
