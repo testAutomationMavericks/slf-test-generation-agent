@@ -848,6 +848,7 @@ async function directZephyrSetIssueLink(testCaseKey: string, issueKey: string): 
     return;
   }
   const tc = await getR.json() as Record<string, unknown>;
+  console.log(`  [Zephyr] GET ${testCaseKey} fields:`, Object.keys(tc).join(', '));
   console.log(`  [Zephyr] GET ${testCaseKey} issueLinks raw:`, JSON.stringify(tc.issueLinks));
 
   // Merge issueLinks into the existing test case payload
@@ -875,7 +876,9 @@ async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ k
     body: JSON.stringify(payload),
   });
   if (!r.ok) throw new Error(`Zephyr create failed: ${r.status} ${r.statusText}`);
-  return r.json() as Promise<{ key?: string }>;
+  const created = await r.json() as Record<string, unknown>;
+  console.log(`  [Zephyr] CREATE response issueLinks:`, JSON.stringify(created.issueLinks), 'key:', created.key);
+  return created as { key?: string };
 }
 
 async function directZephyrAddSteps(
