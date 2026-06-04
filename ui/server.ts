@@ -863,26 +863,13 @@ async function directZephyrAddSteps(
 
 async function directZephyrLink(testCaseKey: string, issueKey: string): Promise<void> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
-
-  // Primary: POST /issuelinks (global endpoint)
-  const r1 = await fetch(`${base}/issuelinks`, {
+  const r = await fetch(`${base}/links`, {
     method: 'POST',
     headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ testCaseKey, issueKey }),
   });
-  const b1 = await r1.text().catch(() => '');
-  console.log(`  [Zephyr] POST /issuelinks ${testCaseKey}→${issueKey}: ${r1.status} ${b1}`);
-
-  if (!r1.ok) {
-    // Fallback: POST /testcases/{key}/links with type
-    const r2 = await fetch(`${base}/testcases/${testCaseKey}/links`, {
-      method: 'POST',
-      headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ issueKey, type: 'COVERAGE' }),
-    });
-    const b2 = await r2.text().catch(() => '');
-    console.log(`  [Zephyr] POST /testcases/${testCaseKey}/links fallback: ${r2.status} ${b2}`);
-  }
+  const body = await r.text().catch(() => '');
+  console.log(`  [Zephyr] POST /links ${testCaseKey}→${issueKey}: ${r.status} ${body}`);
 }
 
 // Connect MCP
