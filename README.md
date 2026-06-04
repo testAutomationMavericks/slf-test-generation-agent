@@ -20,8 +20,7 @@ No Python, no uv, no MCP servers required for live mode. In live mode the app ta
 
 ```bash
 npm install
-npm run ui:build            # compile React → ui/public/
-npm run ui:prod             # start server on :3000
+npm run ui:dev              # start server + Vite (hot reload)
 ```
 
 Open **http://localhost:3000**, go to **Config**, fill in your credentials, and set mode to **Live**.
@@ -42,9 +41,9 @@ Open **http://localhost:3000**, go to **Config**, fill in your credentials, and 
 
 | Command | What it does |
 |---|---|
-| `npm run ui:build` | Compile React TypeScript → `ui/public/` |
-| `npm run ui:prod` | Start Express server on `:3000` (production) |
-| `npm run ui` | Dev mode — server `:3000` + Vite HMR `:5173` |
+| `npm run ui:dev` | **Normal usage** — server `:3000` + Vite HMR with hot reload |
+| `npm run ui:build` | Build React → `ui/public/` (production deploy only) |
+| `npm run ui:prod` | Run server only, no Vite (production deploy only) |
 | `npm run kb:local:seed` | Seed local KB from mock data |
 | `npm run kb:migrate` | Migrate local KB documents → pgvector (Phase 2) |
 | `npm test` | Run all unit tests |
