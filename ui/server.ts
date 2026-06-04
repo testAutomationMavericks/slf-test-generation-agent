@@ -965,7 +965,10 @@ app.get('/api/test/zephyr', async (_req, res) => {
     const r = await fetch(`${baseUrl}/projects?maxResults=1`, {
       headers: { 'Authorization': `Bearer ${config.zephyrApiToken}`, 'Accept': 'application/json' },
     });
-    if (!r.ok) return res.json({ ok: false, error: `HTTP ${r.status} ${r.statusText}` });
+    if (!r.ok) {
+      const body = await r.text().catch(() => '');
+      return res.json({ ok: false, error: `HTTP ${r.status} ${r.statusText}${body ? ': ' + body.slice(0, 200) : ''}` });
+    }
     res.json({ ok: true, detail: 'Connected' });
   } catch (e: unknown) {
     res.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
