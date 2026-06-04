@@ -939,10 +939,10 @@ app.get('/api/test/jira', async (_req, res) => {
       const creds = Buffer.from(`${config.jiraUsername}:${config.jiraApiToken}`).toString('base64');
       headers['Authorization'] = `Basic ${creds}`;
     }
-    const r = await fetch(`${baseUrl}/rest/api/3/serverInfo`, { headers });
+    const r = await fetch(`${baseUrl}/rest/api/3/myself`, { headers });
     if (!r.ok) return res.json({ ok: false, error: `HTTP ${r.status} ${r.statusText}` });
-    const data = await r.json() as { serverTitle?: string; version?: string };
-    res.json({ ok: true, detail: `${data.serverTitle ?? 'Jira'} ${data.version ?? ''}`.trim() });
+    const data = await r.json() as { displayName?: string; emailAddress?: string };
+    res.json({ ok: true, detail: `Connected as ${data.displayName ?? data.emailAddress ?? 'user'}` });
   } catch (e: unknown) {
     res.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
   }
