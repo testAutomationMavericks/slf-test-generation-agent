@@ -848,16 +848,11 @@ async function directZephyrSetIssueLink(testCaseKey: string, issueKey: string): 
     return;
   }
   const tc = await getR.json() as Record<string, unknown>;
-  console.log(`  [Zephyr] GET ${testCaseKey} fields:`, Object.keys(tc).join(', '));
-  console.log(`  [Zephyr] GET ${testCaseKey} issueLinks raw:`, JSON.stringify(tc.issueLinks));
+  console.log(`  [Zephyr] GET ${testCaseKey} links raw:`, JSON.stringify(tc.links));
 
-  // Merge issueLinks into the existing test case payload
-  const existing = (tc.issueLinks as string[] | undefined) ?? [];
-  if (existing.includes(issueKey)) {
-    console.log(`  [Zephyr] ${testCaseKey} already linked to ${issueKey}`);
-    return;
-  }
-  const putPayload = { ...tc, issueLinks: [...existing, issueKey] };
+  // 'links' is the Zephyr field for issue traceability (not 'issueLinks')
+  const existingLinks = (tc.links as string[] | undefined) ?? [];
+  const putPayload = { ...tc, links: [...existingLinks, issueKey] };
 
   const putR = await fetch(`${base}/testcases/${testCaseKey}`, {
     method: 'PUT',
@@ -1124,7 +1119,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         priority: mapZephyrPriority(tc.priority || 'High'),
         folder: apr.folder || 'Generated',
         labels: ['approved', 'test-agent', apr.issueKey.toLowerCase()],
-        issueLinks: [apr.issueKey],
+        links: [apr.issueKey],
       };
       const created = config.mode === 'mock'
         ? JSON.parse(((await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: payload })).content as Array<{text:string}>)[0]?.text ?? '{}').created
