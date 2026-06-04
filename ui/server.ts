@@ -839,28 +839,33 @@ function mapZephyrPriority(priority: string): string {
 async function directZephyrSetIssueLink(testCaseKey: string, issueKey: string): Promise<void> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
 
-  // Fetch the full test case first — PUT requires id, key, priority, status, project
-  const getR = await fetch(`${base}/testcases/${testCaseKey}`, {
+  // GET the links sub-resource to see current issues
+  const getR = await fetch(`${base}/testcases/${testCaseKey}/links`, {
     headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
   });
   if (!getR.ok) {
-    console.warn(`  [Zephyr] GET /testcases/${testCaseKey}: ${getR.status}`);
+    console.warn(`  [Zephyr] GET /testcases/${testCaseKey}/links: ${getR.status}`);
     return;
   }
-  const tc = await getR.json() as Record<string, unknown>;
-  console.log(`  [Zephyr] GET ${testCaseKey} links raw:`, JSON.stringify(tc.links));
+  const linksObj = await getR.json() as { issues?: Array<Record<string, unknown>>; webLinks?: unknown[] };
+  const existingIssues = linksObj.issues ?? [];
 
-  // 'links' is the Zephyr field for issue traceability (not 'issueLinks')
-  const existingLinks = (tc.links as string[] | undefined) ?? [];
-  const putPayload = { ...tc, links: [...existingLinks, issueKey] };
+  if (existingIssues.some(i => i.issueKey === issueKey || i.name === issueKey)) {
+    console.log(`  [Zephyr] ${testCaseKey} already linked to ${issueKey}`);
+    return;
+  }
 
-  const putR = await fetch(`${base}/testcases/${testCaseKey}`, {
+  // PUT to the links sub-resource with the updated issues array
+  const putR = await fetch(`${base}/testcases/${testCaseKey}/links`, {
     method: 'PUT',
     headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(putPayload),
+    body: JSON.stringify({
+      issues: [...existingIssues, { issueKey }],
+      webLinks: linksObj.webLinks ?? [],
+    }),
   });
   const body = await putR.text().catch(() => '');
-  console.log(`  [Zephyr] PUT /testcases/${testCaseKey} issueLinks+=${issueKey}: ${putR.status} ${body.slice(0, 200)}`);
+  console.log(`  [Zephyr] PUT /testcases/${testCaseKey}/links issueKey=${issueKey}: ${putR.status} ${body.slice(0, 200)}`);
 }
 
 async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ key?: string }> {
@@ -1119,7 +1124,6 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         priority: mapZephyrPriority(tc.priority || 'High'),
         folder: apr.folder || 'Generated',
         labels: ['approved', 'test-agent', apr.issueKey.toLowerCase()],
-        links: [apr.issueKey],
       };
       const created = config.mode === 'mock'
         ? JSON.parse(((await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: payload })).content as Array<{text:string}>)[0]?.text ?? '{}').created
