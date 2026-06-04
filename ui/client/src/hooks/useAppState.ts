@@ -62,12 +62,13 @@ export function useAppState() {
     setReviewCases([])
     setCurApprovalId(null)
     setApprovalStatus('')
+    setZephyrTests([])
+    setSessionUploads([])
     try {
       const detail = await api.jiraIssue(issue.key)
       setIssueDetail(detail)
       const tests = await api.zephyrTests(issue.key)
       setZephyrTests(tests)
-      setSessionUploads([])
     } catch (e) {
       console.error('Failed to load issue detail', e)
     }
