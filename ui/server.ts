@@ -1397,12 +1397,14 @@ app.post('/api/generate', async (req, res) => {
   const prompt = customPrompt ?? (
     issueKey
       ? `Generate comprehensive test cases for Jira issue ${issueKey}.\n\n` +
+        `IMPORTANT: Do NOT use any MCP tools, make any tool calls, or fetch any external data. ` +
+        `All required context is pre-loaded below — generate test cases directly from it.\n\n` +
         (contextBlock
-          ? `The following context has been pre-loaded — do NOT make additional tool calls for Jira or Confluence, use this context directly:\n\n${contextBlock}\n\n`
+          ? `${contextBlock}\n\n`
           : '') +
         `Generate test cases covering all acceptance criteria, edge cases, and negative tests. ` +
         `Avoid duplicating any existing Zephyr tests or KB patterns listed above. ` +
-        `Always number test cases starting from TC-001 regardless of existing test numbers. ` +
+        `Always number test cases starting from TC-001. ` +
         `Follow the structure in CLAUDE.md.`
       : 'Help me generate test cases.'
   );
