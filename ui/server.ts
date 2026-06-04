@@ -836,15 +836,34 @@ function mapZephyrPriority(priority: string): string {
   return 'Normal';
 }
 
-async function directZephyrSetIssueLink(testCaseKey: string, name: string, projectKey: string, issueKey: string): Promise<void> {
+async function directZephyrSetIssueLink(testCaseKey: string, issueKey: string): Promise<void> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
-  const r = await fetch(`${base}/testcases/${testCaseKey}`, {
+
+  // Fetch the full test case first — PUT requires id, key, priority, status, project
+  const getR = await fetch(`${base}/testcases/${testCaseKey}`, {
+    headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
+  });
+  if (!getR.ok) {
+    console.warn(`  [Zephyr] GET /testcases/${testCaseKey}: ${getR.status}`);
+    return;
+  }
+  const tc = await getR.json() as Record<string, unknown>;
+
+  // Merge issueLinks into the existing test case payload
+  const existing = (tc.issueLinks as string[] | undefined) ?? [];
+  if (existing.includes(issueKey)) {
+    console.log(`  [Zephyr] ${testCaseKey} already linked to ${issueKey}`);
+    return;
+  }
+  const putPayload = { ...tc, issueLinks: [...existing, issueKey] };
+
+  const putR = await fetch(`${base}/testcases/${testCaseKey}`, {
     method: 'PUT',
     headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectKey, name, issueLinks: [issueKey] }),
+    body: JSON.stringify(putPayload),
   });
-  const body = await r.text().catch(() => '');
-  console.log(`  [Zephyr] PUT /testcases/${testCaseKey} issueLinks=[${issueKey}]: ${r.status} ${body.slice(0, 200)}`);
+  const body = await putR.text().catch(() => '');
+  console.log(`  [Zephyr] PUT /testcases/${testCaseKey} issueLinks+=${issueKey}: ${putR.status} ${body.slice(0, 200)}`);
 }
 
 async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ key?: string }> {
@@ -1110,7 +1129,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         uploadedKeys.push(created.key);
         if (config.mode === 'live') {
           await directZephyrAddSteps(created.key, steps);
-          await directZephyrSetIssueLink(created.key, tc.name, apr.projectKey, apr.issueKey);
+          await directZephyrSetIssueLink(created.key, apr.issueKey);
         }
       }
     } catch (err) {
