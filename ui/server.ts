@@ -839,34 +839,14 @@ function mapZephyrPriority(priority: string): string {
 async function directZephyrSetIssueLink(testCaseKey: string, issueKey: string): Promise<void> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
 
-  // GET full test case — PUT requires all fields (id, key, priority, status, project)
-  const getR = await fetch(`${base}/testcases/${testCaseKey}`, {
-    headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
-  });
-  if (!getR.ok) { console.warn(`  [Zephyr] GET /testcases/${testCaseKey}: ${getR.status}`); return; }
-  const tc = await getR.json() as Record<string, unknown>;
-
-  const putR = await fetch(`${base}/testcases/${testCaseKey}`, {
-    method: 'PUT',
+  // POST /testcases/{key}/links/issues — the correct Zephyr Scale Cloud v2 endpoint
+  const r = await fetch(`${base}/testcases/${testCaseKey}/links/issues`, {
+    method: 'POST',
     headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...tc, issueLinks: [issueKey] }),
+    body: JSON.stringify({ issueKey }),
   });
-  const putBody = await putR.text().catch(() => '');
-  console.log(`  [Zephyr] PUT /testcases/${testCaseKey} issueLinks=[${issueKey}]: ${putR.status}`);
-
-  // Verify the link was stored
-  if (putR.ok) {
-    const verifyR = await fetch(`${base}/testcases/${testCaseKey}/links`, {
-      headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
-    });
-    if (verifyR.ok) {
-      const links = await verifyR.json() as { issues?: Array<{issueKey?: string}> };
-      const stored = links.issues?.some(i => i.issueKey === issueKey);
-      console.log(`  [Zephyr] link verified: ${stored ? 'YES' : 'NO'} — issues: ${JSON.stringify(links.issues)}`);
-    }
-  } else {
-    console.warn(`  [Zephyr] PUT failed: ${putBody.slice(0, 200)}`);
-  }
+  const body = await r.text().catch(() => '');
+  console.log(`  [Zephyr] POST /testcases/${testCaseKey}/links/issues issueKey=${issueKey}: ${r.status} ${body.slice(0, 200)}`);
 }
 
 async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ key?: string }> {
@@ -1125,6 +1105,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         priority: mapZephyrPriority(tc.priority || 'High'),
         folder: apr.folder || 'Generated',
         labels: ['approved', 'test-agent', apr.issueKey.toLowerCase()],
+        issueLinks: [apr.issueKey],
       };
       const created = config.mode === 'mock'
         ? JSON.parse(((await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: payload })).content as Array<{text:string}>)[0]?.text ?? '{}').created
