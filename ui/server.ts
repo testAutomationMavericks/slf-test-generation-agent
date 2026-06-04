@@ -960,14 +960,14 @@ async function directZephyrAddSteps(
 
 async function directZephyrLink(testCaseKey: string, issueKey: string): Promise<void> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
-  const r = await fetch(`${base}/links`, {
+  const r = await fetch(`${base}/issuelinks`, {
     method: 'POST',
     headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ testCaseKey, issueKey }),
   });
   if (!r.ok) {
     const body = await r.text().catch(() => '');
-    console.warn(`  Zephyr link ${testCaseKey} → ${issueKey}: ${r.status} ${body}`);
+    console.warn(`  Zephyr issuelink ${testCaseKey} → ${issueKey}: ${r.status} ${body}`);
   }
 }
 
