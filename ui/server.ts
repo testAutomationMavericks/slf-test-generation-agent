@@ -921,11 +921,15 @@ async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ k
 
 async function directZephyrLink(testCaseKey: string, issueKey: string): Promise<void> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
-  await fetch(`${base}/testcases/${testCaseKey}/links`, {
+  const r = await fetch(`${base}/links`, {
     method: 'POST',
     headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issueId: issueKey }),
+    body: JSON.stringify({ testCaseKey, issueKey }),
   });
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    console.warn(`  Zephyr link ${testCaseKey} → ${issueKey}: ${r.status} ${body}`);
+  }
 }
 
 // Connect MCP
@@ -1141,6 +1145,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         priority: tc.priority || 'Medium',
         folder: apr.folder || 'Generated',
         labels: ['approved', 'test-agent', apr.issueKey.toLowerCase()],
+        issueLinks: [apr.issueKey],
         testScript: {
           type: 'STEP_BY_STEP',
           steps: tc.steps?.length > 0 ? tc.steps : [
