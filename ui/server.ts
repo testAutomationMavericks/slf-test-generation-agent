@@ -226,6 +226,16 @@ async function startLiveAtlassian(): Promise<Client> {
     atlassianEnv.CONFLUENCE_USERNAME = config.confluenceUsername;
     atlassianEnv.CONFLUENCE_API_TOKEN = config.confluenceApiToken;
   }
+  // Extend PATH to find uvx regardless of how/where uv was installed
+  const extraPaths = [
+    `${process.env.HOME}/Library/Python/3.9/bin`,
+    `${process.env.HOME}/Library/Python/3.10/bin`,
+    `${process.env.HOME}/Library/Python/3.11/bin`,
+    `${process.env.HOME}/Library/Python/3.12/bin`,
+    `${process.env.HOME}/.local/bin`,
+    '/usr/local/bin',
+  ].join(':');
+  atlassianEnv.PATH = `${extraPaths}:${process.env.PATH ?? ''}`;
   const transport = new StdioClientTransport({ command: 'uvx', args: ['mcp-atlassian'], env: atlassianEnv });
   const client = new Client({ name: 'atlassian-live', version: '1.0.0' });
   await client.connect(transport);
