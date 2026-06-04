@@ -1092,6 +1092,17 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
   const uploadedKeys: string[] = [];
   const failed: string[] = [];
 
+  // Resolve Jira numeric issueId — needed by Zephyr POST /links/issues
+  let resolvedJiraIssueId: string | undefined = (apr as any).jiraIssueId;
+  if (!resolvedJiraIssueId && config.mode === 'live') {
+    try {
+      const jiraBase = config.jiraUrl.replace(/\/$/, '');
+      const jr = await fetch(`${jiraBase}/rest/api/3/issue/${apr.issueKey}?fields=summary`, { headers: atlassianHeaders() });
+      if (jr.ok) { const jd = await jr.json() as { id?: string }; resolvedJiraIssueId = jd.id; }
+    } catch { /* use key as fallback */ }
+    console.log(`  [Jira] resolved issueId for ${apr.issueKey}: ${resolvedJiraIssueId}`);
+  }
+
   // 1. Upload each approved test to Zephyr
   for (const tc of toUpload) {
     try {
@@ -1115,7 +1126,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         uploadedKeys.push(created.key);
         if (config.mode === 'live') {
           await directZephyrAddSteps(created.key, steps);
-          await directZephyrSetIssueLink(created.key, apr.jiraIssueId ?? apr.issueKey);
+          await directZephyrSetIssueLink(created.key, resolvedJiraIssueId ?? apr.issueKey);
         }
       }
     } catch (err) {
