@@ -931,18 +931,9 @@ app.post('/api/connect', async (_req, res) => {
 
 app.get('/api/test/jira', async (_req, res) => {
   try {
-    const baseUrl = config.jiraUrl.replace(/\/$/, '');
-    const headers: Record<string, string> = { 'Accept': 'application/json' };
-    if (config.jiraBearerToken) {
-      headers['Authorization'] = `Bearer ${config.jiraBearerToken}`;
-    } else {
-      const creds = Buffer.from(`${config.jiraUsername}:${config.jiraApiToken}`).toString('base64');
-      headers['Authorization'] = `Basic ${creds}`;
-    }
-    const r = await fetch(`${baseUrl}/rest/api/3/myself`, { headers });
-    if (!r.ok) return res.json({ ok: false, error: `HTTP ${r.status} ${r.statusText}` });
-    const data = await r.json() as { displayName?: string; emailAddress?: string };
-    res.json({ ok: true, detail: `Connected as ${data.displayName ?? data.emailAddress ?? 'user'}` });
+    const jql = config.jiraProjectKey ? `project = ${config.jiraProjectKey}` : 'ORDER BY created DESC';
+    const issues = await directJiraSearch(jql, 1);
+    res.json({ ok: true, detail: `Connected — ${issues.length > 0 ? `found ${issues[0].key}` : 'project accessible'}` });
   } catch (e: unknown) {
     res.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
   }
