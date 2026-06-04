@@ -728,6 +728,7 @@ function mapJiraIssue(raw: Record<string, unknown>): JiraIssue {
   const fields = (raw.fields ?? {}) as Record<string, unknown>;
   const desc = fields.description;
   return {
+    id: raw.id ? String(raw.id) : undefined,
     key: String(raw.key ?? ''),
     summary: String((fields.summary as string) ?? ''),
     description: typeof desc === 'string' ? desc : (desc ? adfToText(desc) : undefined),
@@ -836,17 +837,17 @@ function mapZephyrPriority(priority: string): string {
   return 'Normal';
 }
 
-async function directZephyrSetIssueLink(testCaseKey: string, issueKey: string): Promise<void> {
+async function directZephyrSetIssueLink(testCaseKey: string, jiraIssueIdOrKey: string): Promise<void> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
-
-  // POST /testcases/{key}/links/issues — the correct Zephyr Scale Cloud v2 endpoint
+  // Zephyr requires numeric issueId; if we have the numeric id use it, otherwise fall back to key
+  const issueId = /^\d+$/.test(jiraIssueIdOrKey) ? Number(jiraIssueIdOrKey) : jiraIssueIdOrKey;
   const r = await fetch(`${base}/testcases/${testCaseKey}/links/issues`, {
     method: 'POST',
     headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issueKey }),
+    body: JSON.stringify({ issueId }),
   });
   const body = await r.text().catch(() => '');
-  console.log(`  [Zephyr] POST /testcases/${testCaseKey}/links/issues issueKey=${issueKey}: ${r.status} ${body.slice(0, 200)}`);
+  console.log(`  [Zephyr] POST /testcases/${testCaseKey}/links/issues issueId=${issueId}: ${r.status} ${body.slice(0, 200)}`);
 }
 
 async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ key?: string }> {
@@ -1011,10 +1012,10 @@ app.post('/api/jira/comment', async (req, res) => {
 
 // Create a new approval request
 app.post('/api/approvals', async (req, res) => {
-  const { issueKey, issueSummary, projectKey, folder, requestedBy, testCases } = req.body;
+  const { issueKey, jiraIssueId, issueSummary, projectKey, folder, requestedBy, testCases } = req.body;
   const id = `apr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const approval = {
-    id, issueKey, issueSummary: issueSummary || issueKey,
+    id, issueKey, jiraIssueId, issueSummary: issueSummary || issueKey,
     projectKey: projectKey || issueKey.split('-')[0],
     folder: folder || 'Generated',
     requestedBy: requestedBy || 'unknown',
@@ -1114,7 +1115,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         uploadedKeys.push(created.key);
         if (config.mode === 'live') {
           await directZephyrAddSteps(created.key, steps);
-          await directZephyrSetIssueLink(created.key, apr.issueKey);
+          await directZephyrSetIssueLink(created.key, apr.jiraIssueId ?? apr.issueKey);
         }
       }
     } catch (err) {

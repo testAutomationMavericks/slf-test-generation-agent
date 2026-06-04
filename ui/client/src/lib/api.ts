@@ -50,7 +50,7 @@ export const api = {
   approvals: () => req<ApprovalRequest[]>('GET', '/api/approvals'),
   approval: (id: string) => req<ApprovalRequest>('GET', `/api/approvals/${id}`),
   createApproval: (data: {
-    issueKey: string; issueSummary: string; projectKey: string
+    issueKey: string; jiraIssueId?: string; issueSummary: string; projectKey: string
     folder: string; requestedBy: string; testCases: ReviewCase[]
   }) => req<{ id: string; url: string }>('POST', '/api/approvals', data),
   reviewApproval: (id: string, approverName: string, decisions: Array<{ id: number; approved: boolean; comment: string }>) =>

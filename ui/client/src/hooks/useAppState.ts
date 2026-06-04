@@ -138,6 +138,7 @@ export function useAppState() {
 
     const r = await api.createApproval({
       issueKey: issueDetail.key,
+      jiraIssueId: issueDetail.id,
       issueSummary: issueDetail.summary,
       projectKey: issueDetail.key.split('-')[0],
       folder,

@@ -33,6 +33,7 @@ export interface UIConfig {
 }
 
 export interface JiraIssue {
+  id?: string
   key: string
   summary: string
   description?: string
@@ -94,6 +95,7 @@ export interface ApprovalTestCase {
 export interface ApprovalRequest {
   id: string
   issueKey: string
+  jiraIssueId?: string
   issueSummary: string
   projectKey: string
   folder: string
