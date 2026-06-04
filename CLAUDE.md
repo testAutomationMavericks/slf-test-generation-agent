@@ -40,7 +40,7 @@ Structure every test case exactly like this:
 ## Test Case: [TC-NNN] [Descriptive Name]
 
 **Type:** [Functional | Regression | Edge Case | Negative | Security]
-**Priority:** [Critical | High | Medium | Low]
+**Priority:** [Critical | High]
 
 ### Preconditions
 - List setup requirements

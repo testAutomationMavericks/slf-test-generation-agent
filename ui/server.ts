@@ -848,6 +848,7 @@ async function directZephyrSetIssueLink(testCaseKey: string, issueKey: string): 
     return;
   }
   const tc = await getR.json() as Record<string, unknown>;
+  console.log(`  [Zephyr] GET ${testCaseKey} issueLinks raw:`, JSON.stringify(tc.issueLinks));
 
   // Merge issueLinks into the existing test case payload
   const existing = (tc.issueLinks as string[] | undefined) ?? [];
@@ -1117,7 +1118,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         name: tc.name,
         objective: tc.content.slice(0, 500),
         precondition: tc.precondition || 'See test case details',
-        priority: mapZephyrPriority(tc.priority || 'Medium'),
+        priority: mapZephyrPriority(tc.priority || 'High'),
         folder: apr.folder || 'Generated',
         labels: ['approved', 'test-agent', apr.issueKey.toLowerCase()],
         issueLinks: [apr.issueKey],
@@ -1227,7 +1228,7 @@ app.post('/api/zephyr/create', async (req, res) => {
       projectKey, name,
       objective: objective?.slice(0, 500),
       precondition: precondition || '',
-      priority: mapZephyrPriority(priority || 'Medium'),
+      priority: mapZephyrPriority(priority || 'High'),
       folder: folder || 'Generated',
       labels: labels || ['auto-generated'],
     };
