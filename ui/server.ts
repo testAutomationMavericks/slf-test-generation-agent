@@ -236,7 +236,7 @@ async function startLiveAtlassian(): Promise<Client> {
     '/usr/local/bin',
   ].join(':');
   atlassianEnv.PATH = `${extraPaths}:${process.env.PATH ?? ''}`;
-  const transport = new StdioClientTransport({ command: 'uvx', args: ['mcp-atlassian'], env: atlassianEnv });
+  const transport = new StdioClientTransport({ command: 'uvx', args: ['--system-certs', 'mcp-atlassian'], env: atlassianEnv });
   const client = new Client({ name: 'atlassian-live', version: '1.0.0' });
   await client.connect(transport);
   return client;
