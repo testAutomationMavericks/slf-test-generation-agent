@@ -32,6 +32,7 @@ export function useAppState() {
   const [approvalStatus, setApprovalStatus] = useState<string>('')
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const activeIssueKey = useRef<string | null>(null)
 
   // ── Status ──────────────────────────────────────────────────────────────────
   const loadStatus = useCallback(async () => {
@@ -57,6 +58,7 @@ export function useAppState() {
   }, [loadStatus])
 
   const selectIssue = useCallback(async (issue: JiraIssue) => {
+    activeIssueKey.current = issue.key
     setSelectedIssue(issue)
     setOutput('')
     setReviewCases([])
@@ -66,8 +68,10 @@ export function useAppState() {
     setSessionUploads([])
     try {
       const detail = await api.jiraIssue(issue.key)
+      if (activeIssueKey.current !== issue.key) return
       setIssueDetail(detail)
       const tests = await api.zephyrTests(issue.key)
+      if (activeIssueKey.current !== issue.key) return
       setZephyrTests(tests)
     } catch (e) {
       console.error('Failed to load issue detail', e)
@@ -77,6 +81,7 @@ export function useAppState() {
   const reloadZephyr = useCallback(async (issueKey: string) => {
     try {
       const tests = await api.zephyrTests(issueKey)
+      if (activeIssueKey.current !== issueKey) return
       setZephyrTests(tests)
     } catch { /* ignore */ }
   }, [])
