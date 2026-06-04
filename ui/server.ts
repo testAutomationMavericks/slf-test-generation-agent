@@ -912,6 +912,15 @@ async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ k
   return r.json() as Promise<{ key?: string }>;
 }
 
+async function directZephyrLink(testCaseKey: string, issueKey: string): Promise<void> {
+  const base = config.zephyrBaseUrl.replace(/\/$/, '');
+  await fetch(`${base}/testcases/${testCaseKey}/links`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${config.zephyrApiToken}`, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ issueId: issueKey }),
+  });
+}
+
 // Connect MCP
 app.post('/api/connect', async (_req, res) => {
   try { await connectMCP(); res.json({ ok: true, mode: config.mode }); }
@@ -1138,7 +1147,14 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
       const created = config.mode === 'mock'
         ? JSON.parse(((await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: payload })).content as Array<{text:string}>)[0]?.text ?? '{}').created
         : await directZephyrCreate(payload);
-      if (created?.key) uploadedKeys.push(created.key);
+      if (created?.key) {
+        uploadedKeys.push(created.key);
+        if (config.mode === 'live') {
+          await directZephyrLink(created.key, apr.issueKey).catch(e =>
+            console.warn(`  Zephyr link failed for ${created.key} → ${apr.issueKey}:`, e)
+          );
+        }
+      }
     } catch (err) {
       failed.push(tc.name);
       console.error(`Failed to upload "${tc.name}":`, err);
