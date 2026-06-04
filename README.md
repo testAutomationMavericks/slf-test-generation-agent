@@ -1,6 +1,18 @@
 # Selfridges Test Management Agent
 
-> AI-powered QA test case generation platform — React + TypeScript, Claude AI, Jira · Confluence · Zephyr Scale via MCP, dual-mode Knowledge Base (local JSON or pgvector).
+AI-powered QA test case generation platform — React + TypeScript, Claude AI, Jira · Confluence · Zephyr Scale.
+
+---
+
+## Prerequisites
+
+| Requirement | Notes |
+|---|---|
+| **Node.js 18+** | `node --version` to check |
+| **npm 9+** | Comes with Node |
+| **Claude Code** | Only needed for the Claude Code AI provider — install from [claude.ai/code](https://claude.ai/code) |
+
+No Python, no uv, no MCP servers required for live mode. In live mode the app talks directly to Jira, Confluence and Zephyr Scale REST APIs.
 
 ---
 
@@ -8,22 +20,21 @@
 
 ```bash
 npm install
-npm run kb:local:seed       # seed local KB with mock data
 npm run ui:build            # compile React → ui/public/
 npm run ui:prod             # start server on :3000
 ```
 
-Open **http://localhost:3000**
+Open **http://localhost:3000**, go to **Config**, fill in your credentials, and set mode to **Live**.
 
 ---
 
 ## What it does
 
 1. **Select** a Jira ticket from the sidebar
-2. **Generate** — Claude reads the AC, checks Confluence, retrieves existing Zephyr tests and KB context, generates a full test suite
+2. **Generate** — Claude reads the acceptance criteria, fetches related Confluence docs, checks existing Zephyr tests and KB context, generates a full test suite
 3. **Review** — paginated modal to edit, include/exclude each test case
 4. **Send for Approval** — shareable URL for a teammate to approve/reject each test
-5. **Upload Approved** — commits to Zephyr Scale, saves to Knowledge Base, posts Jira comment
+5. **Upload Approved** — creates test cases in Zephyr Scale (linked to the Jira issue), saves to Knowledge Base, posts a Jira comment
 
 ---
 
@@ -34,218 +45,166 @@ Open **http://localhost:3000**
 | `npm run ui:build` | Compile React TypeScript → `ui/public/` |
 | `npm run ui:prod` | Start Express server on `:3000` (production) |
 | `npm run ui` | Dev mode — server `:3000` + Vite HMR `:5173` |
-| `npm run ui:server` | Alias for `ui:prod` |
-| `npm run kb:local:seed` | Seed local KB from Jira/Confluence/Zephyr mock data |
+| `npm run kb:local:seed` | Seed local KB from mock data |
 | `npm run kb:migrate` | Migrate local KB documents → pgvector (Phase 2) |
-| `npm test` | Run all 128 unit tests |
-| `npm run test:unit:verbose` | Verbose test output |
-| `npm run demo` | CLI demo without UI |
+| `npm test` | Run all unit tests |
+
+---
+
+## Configuration
+
+Everything is configured from the **Config tab** in the UI — no restart needed after saving.
+
+### Data Source Mode
+- **Mock** — local DEMO tickets (DEMO-1 to DEMO-4), no credentials needed, good for testing the app
+- **Live** — real Jira, Confluence, Zephyr Scale via direct REST API
+
+### Jira + Confluence
+
+Two auth options — use whichever your team has set up:
+
+**Option A — Bearer Token (OAuth / PAT)**
+- Paste your OAuth or Personal Access Token into the **Bearer Token** field
+- Leave Username and API Token fields blank
+- The same token is used for both Jira and Confluence
+
+**Option B — Basic Auth**
+- Leave Bearer Token blank
+- Enter your **Username / Email** and **Jira API Token** (generated at `id.atlassian.com/manage-profile/security/api-tokens`)
+- Enter your **Confluence API Token** (same token on Atlassian Cloud)
+
+**Other fields:**
+- **Jira URL** — e.g. `https://api.atlassian.com/ex/jira/{cloudId}` or `https://your-company.atlassian.net`
+- **Project Key** — e.g. `QAP` — used to filter the issue list
+- **Confluence URL** — e.g. `https://api.atlassian.com/ex/confluence/{cloudId}/wiki` or `https://your-company.atlassian.net/wiki`
+- **Confluence Space Key** — e.g. `QAP` — scopes Confluence searches to your team's space during generation
+
+### Zephyr Scale
+
+- **Zephyr API Token** — JWT token generated from within Zephyr Scale:  
+  Jira → **Apps** → **Zephyr Scale** → **API Tokens** → **Generate Access Token**
+- **Zephyr Base URL** — `https://api.zephyrscale.smartbear.com/v2` (default, correct for Cloud)
+
+### AI Provider
+
+| Provider | Setup |
+|---|---|
+| **Claude Code** | Default. No API key needed — uses your Claude subscription. Requires Claude Code installed. |
+| **Anthropic API** | Direct API. Add your `sk-ant-api03-...` key. Includes prompt caching. |
+| **OpenAI** | Add your OpenAI API key. Supports GPT-4o, o3. |
+| **Local Model** | Ollama, LM Studio, or any OpenAI-compatible endpoint. |
+
+---
+
+## Environment Variables (optional)
+
+Credentials can also be set via `.env` — these are used as defaults before the UI config overrides them:
+
+```env
+# Jira / Confluence — bearer token auth
+JIRA_URL=https://api.atlassian.com/ex/jira/{cloudId}
+JIRA_BEARER_TOKEN=...
+JIRA_PROJECT_KEY=QAP
+
+CONFLUENCE_URL=https://api.atlassian.com/ex/confluence/{cloudId}/wiki
+CONFLUENCE_SPACE_KEY=QAP
+
+# Jira / Confluence — basic auth (alternative)
+JIRA_USERNAME=you@selfridges.com
+JIRA_API_TOKEN=...
+CONFLUENCE_USERNAME=you@selfridges.com
+CONFLUENCE_API_TOKEN=...
+
+# Zephyr Scale
+ZEPHYR_API_TOKEN=eyJ0eXAiOiJKV1Qi...
+ZEPHYR_BASE_URL=https://api.zephyrscale.smartbear.com/v2
+
+# AI
+ANTHROPIC_API_KEY=sk-ant-api03-...
+
+# Phase 2 KB (optional)
+DATABASE_URL=postgresql://user:password@host:5432/dbname
+KB_BACKEND=pgvector
+
+# Network
+PORT=3000
+```
+
+---
+
+## Team Approval Flow
+
+1. Generate tests → Review modal → **Send for Approval** → enter your name
+2. Share the approval URL: `http://<your-ip>:3000/approve/apr-xxx`
+3. Teammate opens it (any device on the same network), approves/rejects each test
+4. **Upload Approved** unlocks → creates test cases in Zephyr Scale (linked to the Jira issue), saves to KB, posts Jira comment
+
+Approval requests survive server restarts — stored in `approvals.json` (Phase 1) or PostgreSQL (Phase 2).
+
+---
+
+## Knowledge Base
+
+The KB stores approved test cases and is used to enrich future generation (avoiding duplicates, reusing patterns).
+
+| Mode | Storage | Use case |
+|---|---|---|
+| **Phase 1 — Local JSON** | `local-kb-data/index.json` on disk | Default, zero setup, single machine |
+| **Phase 2 — pgvector** | PostgreSQL + voyage-3 embeddings | Shared across team, semantic search |
+
+To switch to pgvector: apply `src/kb/schema.sql` to your PostgreSQL database, add `DATABASE_URL` and `ANTHROPIC_API_KEY` to `.env`, then toggle in **Config → KB Storage**.
 
 ---
 
 ## Architecture
 
 ```
-React UI (Vite + TypeScript)  :5173 dev / :3000 prod
+Browser (React + TypeScript)
           │
           ▼  HTTP + SSE
 Express API Server  (ui/server.ts)  :3000
-          │                    │
-          │ MCP Protocol        │ Anthropic SDK
-          ▼                    ▼
-Mock / Live MCP          Claude Sonnet 4    ← generation (prompt cached)
-  jira-server.ts         Claude Haiku 4.5  ← classification
-  confluence.ts          Voyage-3          ← KB embeddings
-  zephyr.ts
           │
-          ▼
-Knowledge Base (toggle in Config UI)
-  Phase 1: local-kb-data/index.json   ← default, zero setup
-  Phase 2: PostgreSQL + pgvector      ← shared team KB, semantic search
+          ├── Live mode: direct REST API calls
+          │     ├── Jira REST API v3
+          │     ├── Confluence REST API
+          │     └── Zephyr Scale REST API v2
           │
-          ▼
-Approval Store (auto-selected with KB backend)
-  Phase 1: approvals.json             ← local file
-  Phase 2: PostgreSQL table           ← survives restarts, shared
+          ├── Mock mode: local MCP mock servers
+          │     ├── src/mocks/jira-server.ts
+          │     ├── src/mocks/confluence-server.ts
+          │     └── src/mocks/zephyr-server.ts
+          │
+          └── AI generation (Claude Code / Anthropic API / OpenAI / Local)
+                └── Context: Jira issue + Confluence docs + Zephyr tests + KB
 ```
 
 ---
 
-## Configuration
+## Corporate Network Notes
 
-Everything is configured from the **Config tab** in the UI — no restart needed.
-
-### Data Source Mode
-- **Mock** — local DEMO tickets (DEMO-1 to DEMO-4), no credentials needed
-- **Live** — real Jira, Confluence, Zephyr Scale
-
-### KB Storage
-- **Phase 1 — Local JSON** — stored in `local-kb-data/index.json`, works offline, single machine
-- **Phase 2 — pgvector** — PostgreSQL + voyage-3 embeddings, shared across team, semantic search
-
-### AI Provider
-- **Claude Code** — default, no API key, uses your subscription
-- **Anthropic API** — direct API with prompt caching (90% cheaper on repeated context)
-- **OpenAI** — GPT-4o, o3
-- **Local Model** — Ollama, LM Studio, any OpenAI-compatible endpoint
-
----
-
-## Environment Variables
-
-Create a `.env` file in the project root:
-
-```env
-# Required for Anthropic API mode + voyage-3 embeddings
-ANTHROPIC_API_KEY=sk-ant-api03-...
-
-# Required for Phase 2 KB and approval persistence
-DATABASE_URL=postgresql://user:password@host:5432/dbname
-KB_BACKEND=pgvector          # or 'local' (default)
-
-# Required for Live mode (Jira/Confluence)
-JIRA_URL=https://your-company.atlassian.net
-JIRA_USERNAME=you@selfridges.com
-JIRA_API_TOKEN=...
-
-CONFLUENCE_URL=https://your-company.atlassian.net/wiki
-CONFLUENCE_USERNAME=you@selfridges.com
-CONFLUENCE_API_TOKEN=...     # same as Jira on Atlassian Cloud
-
-# Required for Live mode (Zephyr Scale)
-ZEPHYR_API_TOKEN=...
-ZEPHYR_BASE_URL=https://api.zephyrscale.smartbear.com/v2
-
-# Network
-SERVER_IP=10.105.217.140     # your machine IP for team sharing
-PORT=3000
-```
-
----
-
-## Phase 2 — pgvector Setup
+If `npm install` fails with registry errors:
 
 ```bash
-# 1. Apply schema to PostgreSQL (once)
-#    Copy src/kb/schema.sql into Supabase SQL Editor and run it
-
-# 2. Install postgres client
-npm install postgres
-
-# 3. Add to .env
-DATABASE_URL=postgresql://...
-ANTHROPIC_API_KEY=sk-ant-...
-
-# 4. Toggle in UI: Config → KB Storage → Phase 2 — pgvector → Save
-
-# 5. Migrate existing local docs (optional)
-npm run kb:migrate
+# Switch to personal hotspot for the install, then switch back
+npm install
 ```
 
-See `src/kb/schema.sql` for the full schema and `docs/phase2-setup.pdf` for the DevOps guide.
-
----
-
-## Team Approval Flow
-
-1. Generate tests → Review modal → **📨 Send for Approval** → enter your name
-2. Share the URL: `http://10.105.217.140:3000/approve/apr-xxx`
-3. Teammate opens it (any device, same network), approves/rejects each test
-4. **↑ Upload Approved** unlocks → uploads to Zephyr, saves to KB, posts Jira comment
-
-Approval requests persist across server restarts (Phase 1: `approvals.json`, Phase 2: PostgreSQL).
-
----
-
-## Project Structure
-
-```
-atlassian-test-agent/
-├── ui/
-│   ├── server.ts                    ← Express API + SSE + MCP orchestration
-│   ├── public/
-│   │   ├── index.html               ← Setup page (shown before React build)
-│   │   └── approve.html             ← Standalone approval page (static)
-│   └── client/                      ← React + TypeScript frontend
-│       ├── src/
-│       │   ├── App.tsx
-│       │   ├── index.css            ← Selfridges brand theme
-│       │   ├── types/api.ts         ← Shared types (client + server)
-│       │   ├── lib/api.ts           ← Typed API client + parseTestCases()
-│       │   ├── hooks/useAppState.ts ← Central React state
-│       │   ├── components/
-│       │   │   ├── Header.tsx
-│       │   │   ├── Sidebar.tsx
-│       │   │   └── ReviewModal.tsx
-│       │   └── pages/
-│       │       ├── ConsolePage.tsx
-│       │       ├── KBPage.tsx
-│       │       ├── ApprovalsPage.tsx
-│       │       └── ConfigPage.tsx
-│       └── public/
-│           └── approve.html         ← Source (copied to ui/public/ on build)
-├── src/
-│   ├── approvals/
-│   │   └── approval-store.ts        ← Local JSON or PostgreSQL approval store
-│   ├── kb/
-│   │   ├── interface.ts             ← IKnowledgeBase interface
-│   │   ├── pg-vector-db.ts          ← Phase 2 pgvector implementation
-│   │   ├── schema.sql               ← PostgreSQL schema
-│   │   └── migrate.ts               ← Local JSON → pgvector migration
-│   ├── knowledge-base/
-│   │   ├── formatters.ts            ← Document formatters (no AWS)
-│   │   └── types.ts
-│   ├── local-kb/
-│   │   ├── local-vector-db.ts       ← Phase 1 local JSON vector store
-│   │   └── seed.ts                  ← KB seeder
-│   └── mocks/
-│       ├── jira-server.ts           ← Mock Jira MCP (DEMO-1..4)
-│       ├── confluence-server.ts     ← Mock Confluence MCP
-│       └── zephyr-server.ts         ← Mock Zephyr MCP
-├── tests/
-│   └── unit/
-│       ├── local-vector-db.test.ts  ← 31 tests
-│       ├── test-case-parser.test.ts ← 57 tests
-│       └── mock-data.test.ts        ← 40 tests (128 total)
-├── CLAUDE.md                        ← Agent instructions
-├── .mcp.json                        ← Active MCP config (auto-rewritten)
-├── .mcp.mock.json                   ← Mock mode MCP template
-├── vite.config.ts
-└── package.json
-```
+`node_modules` is saved locally — the app only needs network access for:
+- Jira, Confluence, Zephyr Scale API calls (your corporate network)
+- Anthropic/OpenAI API calls (if using API provider mode)
 
 ---
 
 ## Fixing Claude Code Permissions (Mac)
 
-If you see `EACCES` when generating tests:
+If you see `EACCES` errors during generation:
 
 ```bash
-# Find the Claude binary
+# Find the Claude binary path (the server prints this on startup)
 find "$HOME/Library/Application Support/Claude" -path "*/MacOS/claude" -type f
 
-# Fix permissions (replace path with actual result above)
-chmod +x "/Users/YOU/Library/Application Support/Claude/claude-code/2.x.x/claude.app/Contents/MacOS/claude"
-
-# Add to PATH permanently
-echo 'export PATH="/Users/YOU/Library/Application Support/Claude/claude-code/2.x.x/claude.app/Contents/MacOS:$PATH"' >> ~/.zshrc
-source ~/.zshrc
+# Fix permissions
+chmod +x "/path/to/claude"
 ```
 
-The server auto-detects and fixes permissions on startup. If it still fails, use **Config → AI Provider → Anthropic API** instead.
-
----
-
-## Corporate Network (npm install issues)
-
-If `npm install` fails with `E403` (shell-quote, playwright-core blocked):
-
-```bash
-# Switch to personal hotspot, install, then switch back
-npm install
-
-# node_modules is saved locally — corporate network only needed for install
-# The app itself only needs internet for Anthropic/OpenAI API calls
-```
-
-Playwright and concurrently have been removed from dependencies to avoid corporate registry blocks.
+The server auto-detects and fixes permissions on startup. If generation still fails, switch to **Config → AI Provider → Anthropic API** as an alternative.
