@@ -836,6 +836,17 @@ function mapZephyrPriority(priority: string): string {
   return 'Normal';
 }
 
+async function directZephyrSetIssueLink(testCaseKey: string, name: string, projectKey: string, issueKey: string): Promise<void> {
+  const base = config.zephyrBaseUrl.replace(/\/$/, '');
+  const r = await fetch(`${base}/testcases/${testCaseKey}`, {
+    method: 'PUT',
+    headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectKey, name, issueLinks: [issueKey] }),
+  });
+  const body = await r.text().catch(() => '');
+  console.log(`  [Zephyr] PUT /testcases/${testCaseKey} issueLinks=[${issueKey}]: ${r.status} ${body.slice(0, 200)}`);
+}
+
 async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ key?: string }> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
   const r = await fetch(`${base}/testcases`, {
@@ -873,16 +884,6 @@ async function directZephyrAddSteps(
   }
 }
 
-async function directZephyrLink(testCaseKey: string, issueKey: string): Promise<void> {
-  const base = config.zephyrBaseUrl.replace(/\/$/, '');
-  const r = await fetch(`${base}/links`, {
-    method: 'POST',
-    headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ testCaseKey, issueKey }),
-  });
-  const body = await r.text().catch(() => '');
-  console.log(`  [Zephyr] POST /links ${testCaseKey}→${issueKey}: ${r.status} ${body}`);
-}
 
 // Connect MCP
 app.post('/api/connect', async (_req, res) => {
@@ -1109,9 +1110,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         uploadedKeys.push(created.key);
         if (config.mode === 'live') {
           await directZephyrAddSteps(created.key, steps);
-          await directZephyrLink(created.key, apr.issueKey).catch(e =>
-            console.warn(`  Zephyr link failed for ${created.key} → ${apr.issueKey}:`, e)
-          );
+          await directZephyrSetIssueLink(created.key, tc.name, apr.projectKey, apr.issueKey);
         }
       }
     } catch (err) {
