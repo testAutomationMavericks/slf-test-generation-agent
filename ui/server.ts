@@ -27,6 +27,7 @@ import { getAllMCPTools } from '../src/mcp-utils.js';
 import { LocalKnowledgeBase, retrieveLocalContextForIssue } from '../src/local-kb/local-vector-db.js';
 import { formatTestCaseDocument } from '../src/knowledge-base/formatters.js';
 import { createApprovalStore } from '../src/approvals/approval-store.js';
+import type { JiraIssue, ZephyrTestCase } from './client/src/types/api.js';
 
 // ─── Voyage-3 Embeddings (Phase 1 scaling) ────────────────────────────────────
 // Falls back to deterministic embeddings if no API key configured
@@ -269,33 +270,7 @@ function syncMCPJson() {
   };
 
   const liveConfig = {
-    mcpServers: {
-      'mcp-atlassian': {
-        command: 'uvx',
-        args: ['mcp-atlassian'],
-        env: config.jiraBearerToken ? {
-          JIRA_URL:                  config.jiraUrl,
-          JIRA_PERSONAL_TOKEN:       config.jiraBearerToken,
-          CONFLUENCE_URL:            config.confluenceUrl,
-          CONFLUENCE_PERSONAL_TOKEN: config.jiraBearerToken,
-        } : {
-          JIRA_URL:              config.jiraUrl,
-          JIRA_USERNAME:         config.jiraUsername,
-          JIRA_API_TOKEN:        config.jiraApiToken,
-          CONFLUENCE_URL:        config.confluenceUrl,
-          CONFLUENCE_USERNAME:   config.confluenceUsername,
-          CONFLUENCE_API_TOKEN:  config.confluenceApiToken,
-        },
-      },
-      'smartbear-mcp': {
-        command: 'npx',
-        args: ['-y', '@smartbear/mcp@latest'],
-        env: {
-          ZEPHYR_API_TOKEN: config.zephyrApiToken,
-          ZEPHYR_BASE_URL:  config.zephyrBaseUrl,
-        },
-      },
-    },
+    mcpServers: {},
   };
 
   const chosen = config.mode === 'mock' ? mockConfig : liveConfig;
@@ -349,13 +324,9 @@ async function _doConnect() {
       throw err;
     }
   } else {
-    try {
-      const [atlassian, zephyr] = await Promise.all([startLiveAtlassian(), startLiveZephyr()]);
-      mcpClients = { jira: atlassian, confluence: atlassian, zephyr };
-    } catch (err) {
-      console.error('  ✗ Live MCP connection failed:', err);
-      throw err;
-    }
+    // Live mode uses direct REST APIs — no MCP processes needed
+    console.log('  ✓ Live mode: using direct REST APIs (no MCP required)');
+    mcpClients = {};
   }
 
   mcpConnected = true;
@@ -824,6 +795,123 @@ app.get('/api/debug', async (_req, res) => {
   });
 });
 
+// ─── Direct REST API helpers (replaces mcp-atlassian and smartbear-mcp) ──────
+
+function atlassianHeaders(): Record<string, string> {
+  const h: Record<string, string> = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+  if (config.jiraBearerToken) {
+    h['Authorization'] = `Bearer ${config.jiraBearerToken}`;
+  } else {
+    const creds = Buffer.from(`${config.jiraUsername}:${config.jiraApiToken}`).toString('base64');
+    h['Authorization'] = `Basic ${creds}`;
+  }
+  return h;
+}
+
+function adfToText(node: unknown): string {
+  if (!node || typeof node !== 'object') return '';
+  const n = node as Record<string, unknown>;
+  if (n.type === 'text') return String(n.text ?? '');
+  if (n.type === 'hardBreak') return '\n';
+  const children = (Array.isArray(n.content) ? n.content : []).map((c: unknown) => adfToText(c)).join('');
+  if (n.type === 'paragraph') return children + '\n';
+  if (n.type === 'heading') return '## ' + children + '\n';
+  if (n.type === 'listItem') return '- ' + children;
+  if (n.type === 'codeBlock') return '```\n' + children + '\n```\n';
+  return children;
+}
+
+function mapJiraIssue(raw: Record<string, unknown>): JiraIssue {
+  const fields = (raw.fields ?? {}) as Record<string, unknown>;
+  const desc = fields.description;
+  return {
+    key: String(raw.key ?? ''),
+    summary: String((fields.summary as string) ?? ''),
+    description: typeof desc === 'string' ? desc : (desc ? adfToText(desc) : undefined),
+    priority: fields.priority as { name: string } | undefined,
+    status: fields.status as { name: string } | undefined,
+    labels: Array.isArray(fields.labels) ? fields.labels as string[] : [],
+    components: Array.isArray(fields.components) ? fields.components as Array<{ name: string }> : [],
+    assignee: fields.assignee as { displayName: string } | null | undefined,
+  };
+}
+
+async function directJiraSearch(jql: string, maxResults = 30): Promise<JiraIssue[]> {
+  const base = config.jiraUrl.replace(/\/$/, '');
+  const r = await fetch(
+    `${base}/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}&fields=summary,status,priority,assignee,labels,components,issuetype`,
+    { headers: atlassianHeaders() }
+  );
+  if (!r.ok) throw new Error(`Jira search failed: ${r.status} ${r.statusText}`);
+  const data = await r.json() as { issues: Array<Record<string, unknown>> };
+  return (data.issues ?? []).map(mapJiraIssue);
+}
+
+async function directJiraIssue(key: string): Promise<JiraIssue> {
+  const base = config.jiraUrl.replace(/\/$/, '');
+  const r = await fetch(
+    `${base}/rest/api/3/issue/${key}?fields=summary,description,status,priority,assignee,labels,components,issuetype,comment`,
+    { headers: atlassianHeaders() }
+  );
+  if (!r.ok) throw new Error(`Jira issue ${key} failed: ${r.status} ${r.statusText}`);
+  return mapJiraIssue(await r.json() as Record<string, unknown>);
+}
+
+async function directJiraComment(issueKey: string, comment: string): Promise<void> {
+  const base = config.jiraUrl.replace(/\/$/, '');
+  await fetch(`${base}/rest/api/3/issue/${issueKey}/comment`, {
+    method: 'POST',
+    headers: atlassianHeaders(),
+    body: JSON.stringify({
+      body: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: comment }] }] }
+    }),
+  });
+}
+
+async function directConfluenceSearch(query: string): Promise<string> {
+  const base = config.confluenceUrl.replace(/\/$/, '');
+  const cql = config.confluenceSpaceKey
+    ? `type=page AND space.key="${config.confluenceSpaceKey}" AND text ~ "${query}"`
+    : `type=page AND text ~ "${query}"`;
+  try {
+    const r = await fetch(
+      `${base}/rest/api/content/search?cql=${encodeURIComponent(cql)}&limit=5&expand=body.storage`,
+      { headers: atlassianHeaders() }
+    );
+    if (!r.ok) return '';
+    const data = await r.json() as { results: Array<Record<string, unknown>> };
+    return (data.results ?? []).map((page: Record<string, unknown>) => {
+      const title = String((page.title as string) ?? '');
+      const body = ((page.body as Record<string, unknown>)?.storage as Record<string, unknown>)?.value as string ?? '';
+      const text = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1500);
+      return `### ${title}\n${text}`;
+    }).join('\n\n');
+  } catch { return ''; }
+}
+
+async function directZephyrTestCases(issueKey: string): Promise<ZephyrTestCase[]> {
+  const base = config.zephyrBaseUrl.replace(/\/$/, '');
+  try {
+    const r = await fetch(`${base}/testcases?issueKey=${issueKey}&maxResults=50`, {
+      headers: { 'Authorization': `Bearer ${config.zephyrApiToken}`, 'Accept': 'application/json' },
+    });
+    if (!r.ok) return [];
+    const data = await r.json() as { values?: ZephyrTestCase[] };
+    return data.values ?? [];
+  } catch { return []; }
+}
+
+async function directZephyrCreate(payload: Record<string, unknown>): Promise<{ key?: string }> {
+  const base = config.zephyrBaseUrl.replace(/\/$/, '');
+  const r = await fetch(`${base}/testcases`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${config.zephyrApiToken}`, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`Zephyr create failed: ${r.status} ${r.statusText}`);
+  return r.json() as Promise<{ key?: string }>;
+}
+
 // Connect MCP
 app.post('/api/connect', async (_req, res) => {
   try { await connectMCP(); res.json({ ok: true, mode: config.mode }); }
@@ -885,19 +973,21 @@ app.get('/api/test/zephyr', async (_req, res) => {
 // Jira
 app.get('/api/jira/issues', async (req, res) => {
   try {
-    if (!mcpConnected) {
-      try { await connectMCP(); } catch (connErr) {
-        console.error('MCP connect error on /api/jira/issues:', connErr);
-        return res.status(503).json({ error: 'MCP not connected: ' + String(connErr) });
-      }
+    if (config.mode === 'mock') {
+      if (!mcpConnected) await connectMCP();
+      const defaultJql = config.jiraProjectKey
+        ? `project = ${config.jiraProjectKey} ORDER BY created DESC`
+        : 'ORDER BY created DESC';
+      const jql = (req.query.jql as string) || defaultJql;
+      const result = await mcpClients.jira!.callTool({ name: 'jira_search', arguments: { jql, max_results: 30 } });
+      const text = (result.content as Array<{text:string}>)[0]?.text ?? '[]';
+      return res.json(JSON.parse(text));
     }
     const defaultJql = config.jiraProjectKey
       ? `project = ${config.jiraProjectKey} ORDER BY created DESC`
       : 'ORDER BY created DESC';
     const jql = (req.query.jql as string) || defaultJql;
-    const result = await mcpClients.jira!.callTool({ name: 'jira_search', arguments: { jql, max_results: 30 } });
-    const text = (result.content as Array<{text:string}>)[0]?.text ?? '[]';
-    res.json(JSON.parse(text));
+    res.json(await directJiraSearch(jql));
   } catch (err) {
     console.error('/api/jira/issues error:', err);
     res.status(500).json({ error: String(err) });
@@ -906,18 +996,24 @@ app.get('/api/jira/issues', async (req, res) => {
 
 app.get('/api/jira/issue/:key', async (req, res) => {
   try {
-    if (!mcpConnected) await connectMCP();
-    const result = await mcpClients.jira!.callTool({ name: 'jira_get_issue', arguments: { issue_key: req.params.key } });
-    res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '{}'));
+    if (config.mode === 'mock') {
+      if (!mcpConnected) await connectMCP();
+      const result = await mcpClients.jira!.callTool({ name: 'jira_get_issue', arguments: { issue_key: req.params.key } });
+      return res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '{}'));
+    }
+    res.json(await directJiraIssue(req.params.key));
   } catch (err) { res.status(500).json({ error: String(err) }); }
 });
 
 // Zephyr
 app.get('/api/zephyr/testcases/:issueKey', async (req, res) => {
   try {
-    if (!mcpConnected) await connectMCP();
-    const result = await mcpClients.zephyr!.callTool({ name: 'zephyr_get_test_cases_by_issue', arguments: { issueKey: req.params.issueKey } });
-    res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '[]'));
+    if (config.mode === 'mock') {
+      if (!mcpConnected) await connectMCP();
+      const result = await mcpClients.zephyr!.callTool({ name: 'zephyr_get_test_cases_by_issue', arguments: { issueKey: req.params.issueKey } });
+      return res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '[]'));
+    }
+    res.json(await directZephyrTestCases(req.params.issueKey));
   } catch (err) { res.status(500).json({ error: String(err) }); }
 });
 
@@ -926,13 +1022,14 @@ app.get('/api/zephyr/testcases/:issueKey', async (req, res) => {
 app.post('/api/jira/comment', async (req, res) => {
   const { issueKey, comment } = req.body as { issueKey: string; comment: string };
   try {
-    if (!mcpConnected) await connectMCP();
-    const result = await mcpClients.jira!.callTool({
-      name: 'jira_add_comment',
-      arguments: { issue_key: issueKey, comment },
-    });
-    const text = (result.content as Array<{text:string}>)[0]?.text ?? '{}';
-    res.json(JSON.parse(text));
+    if (config.mode === 'mock') {
+      if (!mcpConnected) await connectMCP();
+      const result = await mcpClients.jira!.callTool({ name: 'jira_add_comment', arguments: { issue_key: issueKey, comment } });
+      const text = (result.content as Array<{text:string}>)[0]?.text ?? '{}';
+      return res.json(JSON.parse(text));
+    }
+    await directJiraComment(issueKey, comment);
+    res.json({ ok: true });
   } catch (err) {
     console.error('Jira comment failed:', err);
     res.status(500).json({ error: String(err) });
@@ -1038,9 +1135,10 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
           { description: 'Execute as described', expectedResult: tc.outcome || 'Test passes' }
         ],
       };
-      const result = await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: payload });
-      const created = JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '{}');
-      if (created.created?.key) uploadedKeys.push(created.created.key);
+      const created = config.mode === 'mock'
+        ? JSON.parse(((await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: payload })).content as Array<{text:string}>)[0]?.text ?? '{}').created
+        : await directZephyrCreate(payload);
+      if (created?.key) uploadedKeys.push(created.key);
     } catch (err) {
       failed.push(tc.name);
       console.error(`Failed to upload "${tc.name}":`, err);
@@ -1088,10 +1186,11 @@ ${tcLines}
 All test cases have been added to the team Knowledge Base for future reference.`;
 
     try {
-      await mcpClients.jira!.callTool({
-        name: 'jira_add_comment',
-        arguments: { issue_key: apr.issueKey, comment },
-      });
+      if (config.mode === 'mock') {
+        await mcpClients.jira!.callTool({ name: 'jira_add_comment', arguments: { issue_key: apr.issueKey, comment } });
+      } else {
+        await directJiraComment(apr.issueKey, comment);
+      }
       console.log(`  Jira comment posted to ${apr.issueKey}`);
     } catch (err) {
       console.warn(`  Jira comment failed (non-fatal):`, err);
@@ -1125,8 +1224,11 @@ app.delete('/api/approvals/:id', async (req, res) => {
 
 app.post('/api/zephyr/create', async (req, res) => {
   try {
-    if (!mcpConnected) await connectMCP();
-    // Build a clean payload for the Zephyr MCP tool
+    if (config.mode === 'mock') {
+      if (!mcpConnected) await connectMCP();
+      const result = await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: req.body });
+      return res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '{}'));
+    }
     const { projectKey, name, objective, precondition, priority, folder, labels, steps } = req.body;
     const payload: Record<string, unknown> = {
       projectKey, name,
@@ -1136,15 +1238,9 @@ app.post('/api/zephyr/create', async (req, res) => {
       folder: folder || 'Generated',
       labels: labels || ['auto-generated'],
     };
-    // Add step-by-step test script if steps provided
-    if (steps && Array.isArray(steps) && steps.length > 0) {
-      payload.steps = steps;
-    }
-    const result = await mcpClients.zephyr!.callTool({
-      name: 'zephyr_create_test_case',
-      arguments: payload,
-    });
-    res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '{}'));
+    if (steps && Array.isArray(steps) && steps.length > 0) payload.steps = steps;
+    const created = await directZephyrCreate(payload);
+    res.json({ created });
   } catch (err) { res.status(500).json({ error: String(err) }); }
 });
 
@@ -1159,14 +1255,41 @@ app.post('/api/generate', async (req, res) => {
 
   const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
-  // ── 1. Fetch Jira issue context (used by both modes) ────────────────────────
+  // ── 1. Pre-fetch Jira + Confluence + Zephyr context directly ────────────────────
   let issueContext = '';
-  if (issueKey) {
+  let confluenceContext = '';
+  let existingTestsContext = '';
+
+  if (issueKey && config.mode === 'live') {
+    try {
+      const issue = await directJiraIssue(issueKey);
+      issueContext = [
+        `**Summary:** ${issue.summary}`,
+        issue.description ? `**Description:**\n${issue.description}` : '',
+        issue.priority ? `**Priority:** ${issue.priority.name}` : '',
+        issue.status ? `**Status:** ${issue.status.name}` : '',
+        issue.labels?.length ? `**Labels:** ${issue.labels.join(', ')}` : '',
+      ].filter(Boolean).join('\n');
+    } catch (e) { console.log(`  Jira fetch skipped: ${e}`); }
+
+    try {
+      const summary = issueContext.split('\n')[0].replace('**Summary:** ', '');
+      confluenceContext = await directConfluenceSearch(summary || issueKey);
+      if (confluenceContext) console.log(`  Confluence: found related pages`);
+    } catch (e) { console.log(`  Confluence fetch skipped: ${e}`); }
+
+    try {
+      const existing = await directZephyrTestCases(issueKey);
+      if (existing.length > 0) {
+        existingTestsContext = `Existing test cases (${existing.length}):\n` +
+          existing.map(t => `- ${t.key}: ${t.name}`).join('\n');
+        console.log(`  Zephyr: ${existing.length} existing tests found`);
+      }
+    } catch (e) { console.log(`  Zephyr fetch skipped: ${e}`); }
+  } else if (issueKey && config.mode === 'mock') {
     try {
       if (!mcpConnected) await connectMCP();
-      const issueResult = await mcpClients.jira?.callTool({
-        name: 'jira_get_issue', arguments: { issue_key: issueKey }
-      });
+      const issueResult = await mcpClients.jira?.callTool({ name: 'jira_get_issue', arguments: { issue_key: issueKey } });
       const issueText = (issueResult?.content as Array<{text:string}>)?.[0]?.text ?? '';
       if (issueText) issueContext = issueText.slice(0, 3000);
     } catch { /* continue without live data */ }
@@ -1198,19 +1321,20 @@ app.post('/api/generate', async (req, res) => {
 
   // ── 3. Build prompt with all context ─────────────────────────────────────────
   const contextBlock = [
-    issueContext ? `## Live Jira Data for ${issueKey}\n${issueContext}` : '',
-    kbContext    ? `## Related Knowledge Base Context\n${kbContext}`    : '',
+    issueContext         ? `## Jira Issue: ${issueKey}\n${issueContext}` : '',
+    confluenceContext    ? `## Confluence Documentation\n${confluenceContext}` : '',
+    existingTestsContext ? `## Existing Zephyr Tests\n${existingTestsContext}` : '',
+    kbContext            ? `## Related Knowledge Base Context\n${kbContext}` : '',
   ].filter(Boolean).join('\n\n');
 
   const prompt = customPrompt ?? (
     issueKey
-      ? `Generate comprehensive test cases for Jira issue ${issueKey}.` +
-        (contextBlock ? `\n\n${contextBlock}` : '') +
-        `\n\nInstructions: Use the jira_get_issue, confluence_search, and ` +
-        `zephyr_get_test_cases_by_issue tools to gather any additional context. ` +
-        (config.confluenceSpaceKey ? `When calling confluence_search, filter to space key "${config.confluenceSpaceKey}" to find HLD, LLD, and technical design documents. ` : '') +
-        `Then generate test cases covering all acceptance criteria, edge cases, ` +
-        `and negative tests. Avoid duplicating any test patterns already in the KB context above. ` +
+      ? `Generate comprehensive test cases for Jira issue ${issueKey}.\n\n` +
+        (contextBlock
+          ? `The following context has been pre-loaded — do NOT make additional tool calls for Jira or Confluence, use this context directly:\n\n${contextBlock}\n\n`
+          : '') +
+        `Generate test cases covering all acceptance criteria, edge cases, and negative tests. ` +
+        `Avoid duplicating any existing Zephyr tests or KB patterns listed above. ` +
         `Follow the structure in CLAUDE.md.`
       : 'Help me generate test cases.'
   );
