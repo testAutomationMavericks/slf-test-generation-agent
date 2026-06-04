@@ -899,11 +899,17 @@ function zephyrAuthHeader(): string {
 async function directZephyrTestCases(issueKey: string): Promise<ZephyrTestCase[]> {
   const base = config.zephyrBaseUrl.replace(/\/$/, '');
   try {
-    const r = await fetch(`${base}/testcases?issueKey=${issueKey}&maxResults=50`, {
+    const projectKey = config.jiraProjectKey || '';
+    const url = `${base}/testcases?projectKey=${projectKey}&issueKey=${issueKey}&maxResults=50`;
+    const r = await fetch(url, {
       headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
     });
-    if (!r.ok) return [];
-    const data = await r.json() as { values?: ZephyrTestCase[] };
+    if (!r.ok) {
+      console.warn(`[Zephyr] testcases for ${issueKey}: ${r.status}`);
+      return [];
+    }
+    const data = await r.json() as { values?: ZephyrTestCase[]; total?: number };
+    console.log(`[Zephyr] testcases for ${issueKey}: ${data.total ?? data.values?.length ?? 0} results`);
     return data.values ?? [];
   } catch { return []; }
 }
