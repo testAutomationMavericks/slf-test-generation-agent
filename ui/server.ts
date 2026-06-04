@@ -23,7 +23,6 @@ import { spawn, spawnSync } from 'child_process';
 import Anthropic from '@anthropic-ai/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { getAllMCPTools } from '../src/mcp-utils.js';
 import { LocalKnowledgeBase, retrieveLocalContextForIssue } from '../src/local-kb/local-vector-db.js';
 import { formatTestCaseDocument } from '../src/knowledge-base/formatters.js';
 import { createApprovalStore } from '../src/approvals/approval-store.js';
@@ -211,47 +210,6 @@ async function startMockClient(name: string, file: string): Promise<Client> {
   return client;
 }
 
-async function startLiveAtlassian(): Promise<Client> {
-  const usingBearer = !!config.jiraBearerToken;
-  const atlassianEnv: Record<string, string> = {
-    ...process.env as Record<string, string>,
-    JIRA_URL: config.jiraUrl,
-    CONFLUENCE_URL: config.confluenceUrl,
-  };
-  if (usingBearer) {
-    atlassianEnv.JIRA_PERSONAL_TOKEN = config.jiraBearerToken;
-    atlassianEnv.CONFLUENCE_PERSONAL_TOKEN = config.jiraBearerToken;
-  } else {
-    atlassianEnv.JIRA_USERNAME = config.jiraUsername;
-    atlassianEnv.JIRA_API_TOKEN = config.jiraApiToken;
-    atlassianEnv.CONFLUENCE_USERNAME = config.confluenceUsername;
-    atlassianEnv.CONFLUENCE_API_TOKEN = config.confluenceApiToken;
-  }
-  // Extend PATH to find uvx regardless of how/where uv was installed
-  const extraPaths = [
-    `${process.env.HOME}/Library/Python/3.9/bin`,
-    `${process.env.HOME}/Library/Python/3.10/bin`,
-    `${process.env.HOME}/Library/Python/3.11/bin`,
-    `${process.env.HOME}/Library/Python/3.12/bin`,
-    `${process.env.HOME}/.local/bin`,
-    '/usr/local/bin',
-  ].join(':');
-  atlassianEnv.PATH = `${extraPaths}:${process.env.PATH ?? ''}`;
-  const transport = new StdioClientTransport({ command: 'uvx', args: ['--system-certs', 'mcp-atlassian'], env: atlassianEnv });
-  const client = new Client({ name: 'atlassian-live', version: '1.0.0' });
-  await client.connect(transport);
-  return client;
-}
-
-async function startLiveZephyr(): Promise<Client> {
-  const transport = new StdioClientTransport({
-    command: 'npx', args: ['-y', '@smartbear/mcp@latest'],
-    env: { ...process.env, ZEPHYR_API_TOKEN: config.zephyrApiToken, ZEPHYR_BASE_URL: config.zephyrBaseUrl },
-  });
-  const client = new Client({ name: 'zephyr-live', version: '1.0.0' });
-  await client.connect(transport);
-  return client;
-}
 
 // ─── Sync .mcp.json with current mode ────────────────────────────────────────
 
@@ -485,101 +443,46 @@ async function runViaAPI(
   prompt: string,
   issueKey: string | undefined,
   onChunk: (text: string) => void,
-  preloadedKbContext?: string  // passed from generate endpoint to avoid double-fetch
+  preloadedKbContext?: string
 ): Promise<string> {
-  if (!mcpConnected) await connectMCP();
-
   const anthropic = new Anthropic({
     apiKey: config.anthropicApiKey || process.env.ANTHROPIC_API_KEY,
   });
-  const clients = [mcpClients.jira!, mcpClients.confluence!, mcpClients.zephyr!].filter(Boolean);
-  const tools = await getAllMCPTools(...clients);
 
-  const CLAUDE_MD = path.join(ROOT, 'CLAUDE.md');
-  let systemPrompt = fs.existsSync(CLAUDE_MD) ? fs.readFileSync(CLAUDE_MD, 'utf-8') : '';
-
-  // Use pre-fetched KB context if provided, otherwise fetch now
   const kbCtx = preloadedKbContext ?? await (async () => {
     if (!issueKey) return '';
     try { return await retrieveLocalContextForIssue(db, issueKey, issueKey.split('-')[0]); }
     catch { return ''; }
   })();
 
-  if (kbCtx) {
-    systemPrompt += `\n\n---\n\n${kbCtx}`;
-  }
-
-  // ── Haiku routing: classify cheap tasks before generation ────────────────────
   const isComplexGeneration = prompt.includes('Generate') || prompt.includes('generate') || prompt.includes('test case');
   const generationModel = isComplexGeneration ? config.claudeModel : 'claude-haiku-4-5-20251001';
 
-  // ── Build cached prefix: stable domain knowledge in cached block ───────────
-  // System prompt (CLAUDE.md + KB context) is split:
-  //   - Stable part (CLAUDE.md instructions) → cache_control: ephemeral (5 min)
-  //   - Dynamic part (KB context) → regular content
   const claudeMdContent = fs.existsSync(path.join(ROOT, 'CLAUDE.md'))
     ? fs.readFileSync(path.join(ROOT, 'CLAUDE.md'), 'utf-8')
     : '';
 
-  // Build messages with cache control on the stable system prefix
-  const messagesWithCache: Anthropic.MessageParam[] = [{
+  const messages: Anthropic.MessageParam[] = [{
     role: 'user',
     content: [
-      // Cached stable prefix: CLAUDE.md instructions
       {
         type: 'text' as const,
-        text: claudeMdContent + (kbCtx ? `
-
----
-
-${kbCtx}` : ''),
+        text: claudeMdContent + (kbCtx ? `\n\n---\n\n${kbCtx}` : ''),
         cache_control: { type: 'ephemeral' },
       },
-      // Dynamic tail: the actual prompt
       { type: 'text' as const, text: prompt },
     ],
   }];
 
-  const messages: Anthropic.MessageParam[] = messagesWithCache;
-  let fullText = '';
+  const response = await anthropic.messages.create({
+    model: generationModel, max_tokens: 8096,
+    system: [],
+    messages,
+  } as Anthropic.MessageCreateParamsNonStreaming);
 
-  for (let i = 0; i < 12; i++) {
-    const response = await anthropic.messages.create({
-      model: generationModel, max_tokens: 8096,
-      system: [],
-      messages, tools,
-    } as Anthropic.MessageCreateParamsNonStreaming);
-
-    if (response.stop_reason === 'end_turn') {
-      const text = response.content.find(b => b.type === 'text')?.text ?? '';
-      fullText += text; onChunk(text); break;
-    }
-
-    if (response.stop_reason === 'tool_use') {
-      messages.push({ role: 'assistant', content: response.content });
-      const results: Anthropic.ToolResultBlockParam[] = [];
-
-      for (const block of response.content) {
-        if (block.type === 'text' && block.text) onChunk(`\n_${block.text}_\n`);
-        if (block.type !== 'tool_use') continue;
-
-        broadcast('tool_call', { name: block.name, input: block.input });
-        onChunk(`\n🔧 ${block.name}…\n`);
-
-        try {
-          const mc = block.name.startsWith('zephyr_') ? mcpClients.zephyr!
-                   : block.name.startsWith('confluence_') ? mcpClients.confluence!
-                   : mcpClients.jira!;
-          const result = await mc.callTool({ name: block.name, arguments: block.input as Record<string, unknown> });
-          results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result.content) });
-        } catch (err) {
-          results.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${err}`, is_error: true });
-        }
-      }
-      messages.push({ role: 'user', content: results });
-    }
-  }
-  return fullText;
+  const text = response.content.find(b => b.type === 'text')?.text ?? '';
+  onChunk(text);
+  return text;
 }
 
 // ─── Check Claude Code is available ──────────────────────────────────────────
@@ -1165,7 +1068,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
     return res.status(400).json({ error: `Cannot upload — status is ${apr.status}. Needs approval first.` });
   }
 
-  if (!mcpConnected) await connectMCP();
+  if (config.mode === 'mock' && !mcpConnected) await connectMCP();
 
   const toUpload = apr.testCases.filter(t => t.approved);
   if (!toUpload.length) return res.status(400).json({ error: 'No approved test cases to upload' });
@@ -1538,5 +1441,5 @@ httpServer.listen(Number(PORT), HOST, async () => {
   }
   console.log('━'.repeat(58) + '\n');
 
-  connectMCP().catch(e => console.error('MCP connect error:', e));
+  if (config.mode === 'mock') connectMCP().catch(e => console.error('MCP connect error:', e));
 });
