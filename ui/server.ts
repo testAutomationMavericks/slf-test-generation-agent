@@ -838,10 +838,12 @@ function mapJiraIssue(raw: Record<string, unknown>): JiraIssue {
 
 async function directJiraSearch(jql: string, maxResults = 30): Promise<JiraIssue[]> {
   const base = config.jiraUrl.replace(/\/$/, '');
-  const r = await fetch(
-    `${base}/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}&fields=summary,status,priority,assignee,labels,components,issuetype`,
-    { headers: atlassianHeaders() }
-  );
+  // Use POST /rest/api/3/search/jql (newer Atlassian Cloud API; GET /search is deprecated/410)
+  const r = await fetch(`${base}/rest/api/3/search/jql`, {
+    method: 'POST',
+    headers: atlassianHeaders(),
+    body: JSON.stringify({ jql, maxResults, fields: ['summary', 'status', 'priority', 'assignee', 'labels', 'components', 'issuetype'] }),
+  });
   if (!r.ok) throw new Error(`Jira search failed: ${r.status} ${r.statusText}`);
   const data = await r.json() as { issues: Array<Record<string, unknown>> };
   return (data.issues ?? []).map(mapJiraIssue);
