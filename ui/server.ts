@@ -711,27 +711,84 @@ function atlassianHeaders(): Record<string, string> {
   return h;
 }
 
-function adfToText(node: unknown): string {
+function adfToText(node: unknown, depth = 0): string {
   if (!node || typeof node !== 'object') return '';
   const n = node as Record<string, unknown>;
-  if (n.type === 'text') return String(n.text ?? '');
+
+  // Leaf nodes
+  if (n.type === 'text') {
+    let t = String(n.text ?? '');
+    const marks = Array.isArray(n.marks) ? n.marks as Array<{type:string}> : [];
+    if (marks.some(m => m.type === 'strong')) t = `**${t}**`;
+    if (marks.some(m => m.type === 'em')) t = `_${t}_`;
+    if (marks.some(m => m.type === 'code')) t = `\`${t}\``;
+    return t;
+  }
   if (n.type === 'hardBreak') return '\n';
-  const children = (Array.isArray(n.content) ? n.content : []).map((c: unknown) => adfToText(c)).join('');
-  if (n.type === 'paragraph') return children + '\n';
-  if (n.type === 'heading') return '## ' + children + '\n';
-  if (n.type === 'listItem') return '- ' + children;
-  if (n.type === 'codeBlock') return '```\n' + children + '\n```\n';
-  return children;
+  if (n.type === 'rule') return '\n---\n';
+
+  const content = Array.isArray(n.content) ? n.content as unknown[] : [];
+
+  // Ordered list — number each listItem
+  if (n.type === 'orderedList') {
+    return content.map((item, i) => {
+      const c = (item as Record<string,unknown>);
+      const inner = (Array.isArray(c.content) ? c.content as unknown[] : [])
+        .map(ch => adfToText(ch, depth + 1)).join('').replace(/\n$/, '');
+      return `${i + 1}. ${inner}\n`;
+    }).join('');
+  }
+
+  const children = content.map(c => adfToText(c, depth + 1)).join('');
+
+  switch (n.type) {
+    case 'paragraph':   return children + '\n';
+    case 'heading': {
+      const lvl = typeof n.attrs === 'object' && n.attrs ? (n.attrs as any).level ?? 2 : 2;
+      return '#'.repeat(lvl) + ' ' + children + '\n';
+    }
+    case 'bulletList':  return children;
+    case 'listItem':    return '  '.repeat(depth) + '- ' + children.replace(/\n$/, '') + '\n';
+    case 'blockquote':  return children.split('\n').map(l => '> ' + l).join('\n') + '\n';
+    case 'codeBlock':   return '```\n' + children + '\n```\n';
+    case 'panel':       return children;   // info/note/warning panels
+    case 'expand':      return children;
+    case 'table':       return children + '\n';
+    case 'tableRow':    return children + '\n';
+    case 'tableHeader': return `| ${children.trim()} `;
+    case 'tableCell':   return `| ${children.trim()} `;
+    default:            return children;
+  }
 }
 
 function mapJiraIssue(raw: Record<string, unknown>): JiraIssue {
   const fields = (raw.fields ?? {}) as Record<string, unknown>;
   const desc = fields.description;
+  let description = typeof desc === 'string' ? desc : (desc ? adfToText(desc) : '');
+
+  // Scan custom fields for acceptance criteria content
+  const acParts: string[] = [];
+  for (const [k, v] of Object.entries(fields)) {
+    if (!k.startsWith('customfield_') || !v) continue;
+    if (typeof v === 'string' && v.trim().length > 10) {
+      acParts.push(v.trim());
+    } else if (typeof v === 'object' && (v as any).type === 'doc') {
+      const text = adfToText(v);
+      if (text.trim()) acParts.push(text.trim());
+    }
+  }
+  if (acParts.length > 0) {
+    description = (description ? description + '\n\n' : '') +
+      '### Custom Fields\n' + acParts.join('\n\n');
+  }
+
+  console.log(`  [Jira] ${raw.key} description length: ${description?.length ?? 0} chars`);
+
   return {
     id: raw.id ? String(raw.id) : undefined,
     key: String(raw.key ?? ''),
     summary: String((fields.summary as string) ?? ''),
-    description: typeof desc === 'string' ? desc : (desc ? adfToText(desc) : undefined),
+    description: description || undefined,
     priority: fields.priority as { name: string } | undefined,
     status: fields.status as { name: string } | undefined,
     labels: Array.isArray(fields.labels) ? fields.labels as string[] : [],
@@ -755,8 +812,9 @@ async function directJiraSearch(jql: string, maxResults = 30): Promise<JiraIssue
 
 async function directJiraIssue(key: string): Promise<JiraIssue> {
   const base = config.jiraUrl.replace(/\/$/, '');
+  // Fetch all fields so custom acceptance-criteria fields are included
   const r = await fetch(
-    `${base}/rest/api/3/issue/${key}?fields=summary,description,status,priority,assignee,labels,components,issuetype,comment`,
+    `${base}/rest/api/3/issue/${key}?expand=renderedFields`,
     { headers: atlassianHeaders() }
   );
   if (!r.ok) throw new Error(`Jira issue ${key} failed: ${r.status} ${r.statusText}`);
@@ -1262,6 +1320,7 @@ app.post('/api/generate', async (req, res) => {
         issue.status ? `**Status:** ${issue.status.name}` : '',
         issue.labels?.length ? `**Labels:** ${issue.labels.join(', ')}` : '',
       ].filter(Boolean).join('\n');
+      console.log(`  [Generate] issueContext for ${issueKey}: ${issueContext.length} chars — preview: ${issueContext.slice(0, 300).replace(/\n/g, '↵')}`);
     } catch (e) {
       console.log(`  Jira fetch skipped: ${e}`);
       // Fall back to the issue detail already loaded by the client
