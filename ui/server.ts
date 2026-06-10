@@ -1393,20 +1393,25 @@ app.post('/api/generate', async (req, res) => {
     kbContext            ? `## Related Knowledge Base Context\n${kbContext}` : '',
   ].filter(Boolean).join('\n\n');
 
-  const prompt = customPrompt ?? (
-    issueKey
-      ? `Generate comprehensive test cases for Jira issue ${issueKey}.\n\n` +
-        `IMPORTANT: Do NOT use any MCP tools, make any tool calls, or fetch any external data. ` +
-        `Generate test cases directly from whatever context is provided below.\n\n` +
-        (contextBlock
-          ? `${contextBlock}\n\n`
-          : `No additional context was retrieved. Generate test cases based on the issue key and any description above.\n\n`) +
+  // Always prepend the server-fetched context block, regardless of whether
+  // the client sent a custom prompt — the client never has the context.
+  const instruction = customPrompt ??
+    (issueKey
+      ? `Generate comprehensive test cases for Jira issue ${issueKey}. ` +
         `Generate test cases covering all acceptance criteria, edge cases, and negative tests. ` +
         `Avoid duplicating any existing Zephyr tests or KB patterns listed above. ` +
         `Always number test cases starting from TC-001. ` +
         `Follow the structure in CLAUDE.md.`
-      : 'Help me generate test cases.'
-  );
+      : 'Help me generate test cases.');
+
+  const prompt = issueKey
+    ? `IMPORTANT: Do NOT use any MCP tools, make any tool calls, or fetch any external data. ` +
+      `Generate test cases directly from the context provided below.\n\n` +
+      (contextBlock
+        ? `${contextBlock}\n\n`
+        : `No additional context retrieved — generate from issue key alone.\n\n`) +
+      instruction
+    : instruction;
 
   try {
     let fullOutput = '';

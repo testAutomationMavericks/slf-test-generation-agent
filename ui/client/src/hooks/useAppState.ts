@@ -95,8 +95,7 @@ export function useAppState() {
 
     const fullPrompt = prompt ?? (
       `Generate comprehensive test cases for Jira issue ${issueDetail.key}. ` +
-      `Fetch the ticket, check Confluence for architecture context, retrieve existing Zephyr test cases, ` +
-      `then generate test cases covering all acceptance criteria, edge cases, and negative tests. ` +
+      `Cover all acceptance criteria, edge cases, and negative tests. ` +
       `Follow the structure in CLAUDE.md.`
     )
 
