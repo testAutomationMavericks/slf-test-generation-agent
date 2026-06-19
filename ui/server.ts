@@ -113,6 +113,7 @@ export interface UIConfig {
   confluenceUsername: string;
   confluenceApiToken: string;
   jiraProjectKey: string;
+  jiraEpicKey: string;       // optional — if set, only load issues from this epic
   zephyrApiToken: string;
   zephyrBaseUrl: string;
   // ── Anthropic ──────────────────────────────────────────────────────────────
@@ -152,6 +153,7 @@ function loadConfig(): UIConfig {
     confluenceUsername: process.env.CONFLUENCE_USERNAME ?? '',
     confluenceApiToken: process.env.CONFLUENCE_API_TOKEN ?? '',
     jiraProjectKey: process.env.JIRA_PROJECT_KEY ?? '',
+    jiraEpicKey: process.env.JIRA_EPIC_KEY ?? '',
     zephyrApiToken: process.env.ZEPHYR_API_TOKEN ?? '',
     zephyrBaseUrl: process.env.ZEPHYR_BASE_URL ?? 'https://api.zephyrscale.smartbear.com/v2',
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
@@ -954,12 +956,22 @@ app.post('/api/connect', async (_req, res) => {
   catch (err) { res.status(500).json({ error: String(err) }); }
 });
 
+function defaultJiraJql(): string {
+  if (config.jiraEpicKey) {
+    // Filter to issues whose parent is the epic (Jira Cloud company-managed and next-gen)
+    const base = `"Epic Link" = ${config.jiraEpicKey} OR parent = ${config.jiraEpicKey}`;
+    return config.jiraProjectKey ? `project = ${config.jiraProjectKey} AND (${base})` : base;
+  }
+  return config.jiraProjectKey
+    ? `project = ${config.jiraProjectKey} ORDER BY created DESC`
+    : 'ORDER BY created DESC';
+}
+
 // ── Individual connectivity tests ────────────────────────────────────────────
 
 app.get('/api/test/jira', async (_req, res) => {
   try {
-    const jql = config.jiraProjectKey ? `project = ${config.jiraProjectKey}` : 'ORDER BY created DESC';
-    const issues = await directJiraSearch(jql, 1);
+    const issues = await directJiraSearch(defaultJiraJql(), 1);
     res.json({ ok: true, detail: `Connected — ${issues.length > 0 ? `found ${issues[0].key}` : 'project accessible'}` });
   } catch (e: unknown) {
     res.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -1005,18 +1017,12 @@ app.get('/api/jira/issues', async (req, res) => {
   try {
     if (config.mode === 'mock') {
       if (!mcpConnected) await connectMCP();
-      const defaultJql = config.jiraProjectKey
-        ? `project = ${config.jiraProjectKey} ORDER BY created DESC`
-        : 'ORDER BY created DESC';
-      const jql = (req.query.jql as string) || defaultJql;
+      const jql = (req.query.jql as string) || defaultJiraJql();
       const result = await mcpClients.jira!.callTool({ name: 'jira_search', arguments: { jql, max_results: 30 } });
       const text = (result.content as Array<{text:string}>)[0]?.text ?? '[]';
       return res.json(JSON.parse(text));
     }
-    const defaultJql = config.jiraProjectKey
-      ? `project = ${config.jiraProjectKey} ORDER BY created DESC`
-      : 'ORDER BY created DESC';
-    const jql = (req.query.jql as string) || defaultJql;
+    const jql = (req.query.jql as string) || defaultJiraJql();
     res.json(await directJiraSearch(jql));
   } catch (err) {
     console.error('/api/jira/issues error:', err);

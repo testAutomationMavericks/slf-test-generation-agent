@@ -329,6 +329,13 @@ export function ConfigPage({ onSaved }: Props) {
                 </div>
 
                 <div style={S.row}>
+                  <Field label="Epic Key (optional — filters issue list to this epic)">
+                    <TextInput value={String(cfg.jiraEpicKey ?? '')} onChange={v => set('jiraEpicKey', v)} placeholder="e.g. QAP-5 — leave blank to load all project issues" />
+                  </Field>
+                  <div />
+                </div>
+
+                <div style={S.row}>
                   <Field label="Bearer Token (OAuth / PAT)">
                     <TextInput value={String(cfg.jiraBearerToken ?? '')} onChange={v => set('jiraBearerToken', v)} placeholder="Leave blank to use Basic Auth below" type="password" />
                   </Field>

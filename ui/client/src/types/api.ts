@@ -18,6 +18,7 @@ export interface UIConfig {
   confluenceUsername: string
   confluenceApiToken: string
   jiraProjectKey: string
+  jiraEpicKey: string
   zephyrApiToken: string
   zephyrBaseUrl: string
   anthropicApiKey: string
