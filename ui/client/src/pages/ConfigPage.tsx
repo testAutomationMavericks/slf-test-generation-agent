@@ -168,44 +168,31 @@ export function ConfigPage({ onSaved }: Props) {
           {/* ── Section 2: KB Backend ──────────────────────────────────────── */}
           <div style={S.section}>
             <div style={S.label}>🗄 Knowledge Base Storage</div>
-            <ToggleGroup
-              options={[
-                { id: 'local' as KBBackend, label: 'Phase 1 — Local JSON' },
-                { id: 'pgvector' as KBBackend, label: 'Phase 2 — pgvector' },
-              ]}
-              value={kbBackend}
-              onChange={v => set('kbBackend', v)}
-              colors={{ pgvector: '#3d9970' }}
-            />
-            <div style={{ marginTop: 12, ...S.note(
-              kbBackend === 'local' ? 'rgba(100,80,160,.3)' : 'rgba(61,153,112,.3)',
-              kbBackend === 'local' ? 'rgba(100,80,160,.04)' : 'rgba(61,153,112,.04)',
-            )}}>
-              {kbBackend === 'local'
-                ? '📁 Local JSON — stored in local-kb-data/index.json on this machine. Works offline, no setup needed. Best for single-user or demo use.'
-                : '🐘 pgvector — PostgreSQL + voyage-3 embeddings. Shared across the whole team, true semantic search, scales to millions of docs.'}
+            {(() => {
+              const hasDb = !!(cfg.databaseUrl ?? '').trim()
+              return (
+                <div style={S.note(
+                  hasDb ? 'rgba(61,153,112,.3)' : 'rgba(100,80,160,.3)',
+                  hasDb ? 'rgba(61,153,112,.04)' : 'rgba(100,80,160,.04)',
+                )}>
+                  {hasDb
+                    ? '🐘 EC2 / pgvector — approved test cases will be written to your EC2 PostgreSQL instance and shared across the team.'
+                    : '📁 Local JSON (fallback) — no EC2 URL configured. Approved tests are stored in local-kb-data/index.json on this machine.'}
+                </div>
+              )
+            })()}
+            <Field label="EC2 Database URL">
+              <TextInput
+                value={String(cfg.databaseUrl ?? '')}
+                onChange={v => set('databaseUrl', v)}
+                placeholder="postgresql://user:password@your-ec2-host:5432/dbname"
+                type="password"
+              />
+            </Field>
+            <div style={{ marginTop: 4, fontSize: 11, color: '#888' }}>
+              Provide the URL from your DevOps team. Leave blank to fall back to local storage.
+              Once set, run <code style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>npm run kb:migrate</code> to copy any existing local docs to EC2.
             </div>
-
-            {kbBackend === 'pgvector' && (
-              <div style={{ marginTop: 12 }}>
-                <div style={S.note('rgba(200,148,26,.35)', 'rgba(200,148,26,.04)')}>
-                  <strong>Requires:</strong> PostgreSQL with pgvector extension + Anthropic API key for voyage-3 embeddings.{' '}
-                  Run <code style={{ fontFamily: 'var(--mono)', background: '#f0efe9', padding: '1px 5px', fontSize: 12 }}>npm install postgres</code>{' '}
-                  and apply <code style={{ fontFamily: 'var(--mono)', background: '#f0efe9', padding: '1px 5px', fontSize: 12 }}>src/kb/schema.sql</code> to your database first.
-                </div>
-                <Field label="Database URL">
-                  <TextInput
-                    value={String(cfg.databaseUrl ?? '')}
-                    onChange={v => set('databaseUrl', v)}
-                    placeholder="postgresql://user:password@host:5432/dbname"
-                    type="password"
-                  />
-                </Field>
-                <div style={{ marginTop: 8, fontSize: 11, color: '#888' }}>
-                  After switching, run <code style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>npm run kb:migrate</code> to copy existing documents from local JSON to pgvector.
-                </div>
-              </div>
-            )}
           </div>
 
           <div style={S.divider} />
@@ -402,20 +389,18 @@ export function ConfigPage({ onSaved }: Props) {
         <button className="btn btn-secondary" onClick={testConn} disabled={testing}>
           {testing ? <span className="spinner" /> : null} Test Connection
         </button>
-        {kbBackend === 'pgvector' && (
-          <button className="btn btn-secondary" onClick={() => {
-            alert('Run in terminal:\nnpm run kb:migrate\n\nThis copies your local KB documents to pgvector with voyage-3 embeddings.')
-          }}>
-            ↑ Migrate Local → pgvector
-          </button>
-        )}
+        <button className="btn btn-secondary" onClick={() => {
+          alert('Run in terminal:\nnpm run kb:migrate\n\nThis copies your local KB documents to EC2 pgvector with voyage-3 embeddings.')
+        }}>
+          ↑ Migrate Local → EC2
+        </button>
         {saved && (
           <span style={{ fontSize: 12, color: '#2a7a50', fontWeight: 600 }}>✓ Saved</span>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center', fontSize: 11, color: '#888' }}>
           <span>Jira/Zephyr: <strong style={{ color: mode === 'live' ? '#2a7a50' : '#7a5fa0' }}>{mode}</strong></span>
           <span>•</span>
-          <span>KB: <strong style={{ color: kbBackend === 'pgvector' ? '#2a7a50' : '#7a5fa0' }}>{kbBackend}</strong></span>
+          <span>KB: <strong style={{ color: (cfg.databaseUrl ?? '').trim() ? '#2a7a50' : '#7a5fa0' }}>{(cfg.databaseUrl ?? '').trim() ? 'EC2' : 'local'}</strong></span>
           <span>•</span>
           <span>AI: <strong style={{ color: '#111' }}>{provider}</strong></span>
         </div>

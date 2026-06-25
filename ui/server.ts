@@ -24,6 +24,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LocalKnowledgeBase, retrieveLocalContextForIssue } from '../src/local-kb/local-vector-db.js';
+import { PgKnowledgeBase } from '../src/kb/pg-vector-db.js';
+import type { IKnowledgeBase } from '../src/kb/interface.js';
 import { formatTestCaseDocument } from '../src/knowledge-base/formatters.js';
 import { createApprovalStore } from '../src/approvals/approval-store.js';
 import type { JiraIssue, ZephyrTestCase } from './client/src/types/api.js';
@@ -69,23 +71,18 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─── KB Backend (Phase 1 = local JSON, Phase 2 = pgvector) ──────────────────
+// ─── KB Backend — EC2/pgvector is default; local JSON is fallback only ────────
 function createKB(): IKnowledgeBase {
-  if (config.kbBackend === 'pgvector') {
-    const dbUrl = config.databaseUrl || process.env.DATABASE_URL;
-    const apiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
-    if (!dbUrl) {
-      console.warn('  ⚠ KB_BACKEND=pgvector but DATABASE_URL not set — falling back to local');
-      return new LocalKnowledgeBase(path.join(ROOT, 'local-kb-data'));
-    }
-    if (!apiKey) {
-      console.warn('  ⚠ KB_BACKEND=pgvector but ANTHROPIC_API_KEY not set — falling back to local');
-      return new LocalKnowledgeBase(path.join(ROOT, 'local-kb-data'));
-    }
-    console.log('  KB backend: pgvector (Phase 2)');
+  const dbUrl = config.databaseUrl || process.env.DATABASE_URL;
+  const apiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
+  if (dbUrl && apiKey) {
+    console.log('  KB backend: pgvector (EC2)');
     return new PgKnowledgeBase(dbUrl, apiKey);
   }
-  console.log('  KB backend: local JSON (Phase 1)');
+  if (dbUrl && !apiKey) {
+    console.warn('  ⚠ DATABASE_URL set but ANTHROPIC_API_KEY missing — falling back to local KB');
+  }
+  console.log('  KB backend: local JSON (fallback)');
   return new LocalKnowledgeBase(path.join(ROOT, 'local-kb-data'));
 }
 
@@ -164,6 +161,8 @@ function loadConfig(): UIConfig {
     localModel: process.env.LOCAL_MODEL ?? 'llama3.2',
     localApiKey: process.env.LOCAL_MODEL_API_KEY ?? '',
     autoSaveToKB: false,
+    kbBackend: process.env.DATABASE_URL ? 'pgvector' : 'local',
+    databaseUrl: process.env.DATABASE_URL ?? '',
   };
 }
 
@@ -178,7 +177,6 @@ db = createKB();
 approvalStore = createApprovalStore({
   filePath: path.join(ROOT, 'approvals.json'),
   databaseUrl: config.databaseUrl || process.env.DATABASE_URL,
-  kbBackend: config.kbBackend,
 });
 
 // ─── WebSocket broadcast ──────────────────────────────────────────────────────
@@ -600,13 +598,15 @@ app.post('/api/config', async (req, res) => {
     openaiApiKey:       inc.openaiApiKey       === mask ? config.openaiApiKey       : (inc.openaiApiKey       ?? config.openaiApiKey),
     localApiKey:        inc.localApiKey        === mask ? config.localApiKey        : (inc.localApiKey        ?? config.localApiKey),
   };
-  const prevKbBackend = config.kbBackend;
+  const prevDbUrl = (config as any)._prevDbUrl ?? '';
+  (config as any)._prevDbUrl = config.databaseUrl || process.env.DATABASE_URL || '';
   saveConfig(config);
   syncMCPJson(); // keep .mcp.json in sync whenever config changes
 
-  // Hot-swap KB + approval store if backend changed
-  if (config.kbBackend !== prevKbBackend) {
-    console.log(`  Switching KB backend: ${prevKbBackend} → ${config.kbBackend}`);
+  // Hot-swap KB + approval store if database URL changed
+  const newDbUrl = config.databaseUrl || process.env.DATABASE_URL || '';
+  if (newDbUrl !== prevDbUrl) {
+    console.log(`  Switching KB backend due to DATABASE_URL change`);
     if ('disconnect' in db && typeof (db as any).disconnect === 'function') {
       await (db as any).disconnect().catch(() => {});
     }
@@ -616,8 +616,7 @@ app.post('/api/config', async (req, res) => {
     }
     approvalStore = createApprovalStore({
       filePath: path.join(ROOT, 'approvals.json'),
-      databaseUrl: config.databaseUrl || process.env.DATABASE_URL,
-      kbBackend: config.kbBackend,
+      databaseUrl: newDbUrl || undefined,
     });
     console.log(`  Approval store: ${approvalStore.backend}`);
   }
@@ -633,7 +632,7 @@ app.get('/api/status', async (_req, res) => {
   res.json({
     mcpConnected,
     mode: config.mode,
-    kbBackend: config.kbBackend ?? 'local',
+    kbBackend: (config.databaseUrl || process.env.DATABASE_URL) ? 'pgvector' : 'local',
     aiProvider: config.aiProvider ?? 'claudecode',
     claudeMode: config.aiProvider ?? 'claudecode',
     model: config.aiProvider === 'openai' ? config.openaiModel

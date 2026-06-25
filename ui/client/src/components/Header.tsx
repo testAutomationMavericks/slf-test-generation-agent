@@ -23,7 +23,7 @@ const NAV_ITEMS: Array<{ id: Page; label: string }> = [
 ]
 
 export function Header({ status, page, onNav }: Props) {
-  const connected = status?.mcpConnected ?? false
+  const connected = status !== null && status !== undefined
   const provider  = status?.aiProvider ?? 'claudecode'
   const mode      = status?.mode ?? 'mock'
 

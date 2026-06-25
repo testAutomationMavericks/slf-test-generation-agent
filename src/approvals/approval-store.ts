@@ -193,13 +193,11 @@ export class PgApprovalStore implements IApprovalStore {
 export function createApprovalStore(opts: {
   filePath: string;
   databaseUrl?: string;
-  kbBackend?: string;
 }): IApprovalStore {
-  // Use Postgres when Phase 2 KB is active and DATABASE_URL is set
-  if (opts.kbBackend === 'pgvector' && opts.databaseUrl) {
-    logger.info('Approval store: PostgreSQL (Phase 2)');
+  if (opts.databaseUrl) {
+    logger.info('Approval store: PostgreSQL (EC2)');
     return new PgApprovalStore(opts.databaseUrl);
   }
-  logger.info('Approval store: local JSON (Phase 1)');
+  logger.info('Approval store: local JSON (fallback)');
   return new LocalApprovalStore(opts.filePath);
 }

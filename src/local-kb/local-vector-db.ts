@@ -15,6 +15,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from '../logger.js';
 import { KBDocument } from '../knowledge-base/types.js';
+import type { IKnowledgeBase } from '../kb/interface.js';
 
 // ─── Vector Dimension ─────────────────────────────────────────────────────────
 
@@ -293,7 +294,7 @@ export function buildLocalKBContext(
 }
 
 export async function retrieveLocalContextForIssue(
-  db: LocalKnowledgeBase,
+  db: IKnowledgeBase,
   issueKey: string,
   projectKey: string,
   featureArea?: string
