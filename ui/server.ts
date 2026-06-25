@@ -139,7 +139,7 @@ function loadConfig(): UIConfig {
     return { aiProvider: 'claudecode', ...saved };
   }
   return {
-    mode: 'mock',
+    mode: 'live',
     aiProvider: 'claudecode',
     jiraUrl: process.env.JIRA_URL ?? '',
     jiraBearerToken: process.env.JIRA_BEARER_TOKEN ?? '',
