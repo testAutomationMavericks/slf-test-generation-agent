@@ -76,7 +76,6 @@ export class PgKnowledgeBase implements IKnowledgeBase {
 
   private async initSql(connectionUrl: string) {
     try {
-      // Dynamically import postgres to avoid breaking mock mode if not installed
       const { default: postgres } = await import('postgres')
       this.sql = postgres(connectionUrl, {
         ssl: 'require',
@@ -85,24 +84,21 @@ export class PgKnowledgeBase implements IKnowledgeBase {
         connect_timeout: 10,
         onnotice: () => {},
       })
+      // Verify the connection is actually reachable before marking ready
+      await this.sql`SELECT 1`
       this.connected = true
       logger.info('PgKnowledgeBase: connected to PostgreSQL')
     } catch (e) {
-      logger.warn('PgKnowledgeBase: failed to connect —', e)
+      logger.warn('PgKnowledgeBase: failed to connect — server will use local KB fallback until EC2 is ready —', e)
+      this.sql = null
       this.connected = false
-    }
-  }
-
-  private ensureConnected() {
-    if (!this.connected || !this.sql) {
-      throw new Error('PgKnowledgeBase not connected. Check DATABASE_URL and run: npm install postgres')
     }
   }
 
   // ── addDocument ─────────────────────────────────────────────────────────────
 
   async addDocument(doc: KBDocument): Promise<void> {
-    this.ensureConnected()
+    if (!this.connected) { logger.warn('PgKB: not connected, skipping addDocument'); return; }
     const embedding = await getEmbedding(doc.content, this.apiKey)
     const meta = { source: doc.source, ...doc.metadata }
 
@@ -134,7 +130,7 @@ export class PgKnowledgeBase implements IKnowledgeBase {
   // ── retrieve ────────────────────────────────────────────────────────────────
 
   async retrieve(query: string, options: RetrieveOptions = {}): Promise<RetrieveResult[]> {
-    this.ensureConnected()
+    if (!this.connected) { logger.warn('PgKB: not connected, returning empty results'); return []; }
     const { topK = 8, minScore = 0.3, filter } = options
     const queryVec = await getQueryEmbedding(query, this.apiKey)
 
@@ -190,14 +186,14 @@ export class PgKnowledgeBase implements IKnowledgeBase {
   // ── deleteDocument ──────────────────────────────────────────────────────────
 
   async deleteDocument(id: string): Promise<void> {
-    this.ensureConnected()
+    if (!this.connected) { logger.warn('PgKB: not connected, skipping deleteDocument'); return; }
     await this.sql`DELETE FROM kb_documents WHERE id = ${id}`
   }
 
   // ── clear ───────────────────────────────────────────────────────────────────
 
   async clear(): Promise<void> {
-    this.ensureConnected()
+    if (!this.connected) { logger.warn('PgKB: not connected, skipping clear'); return; }
     await this.sql`TRUNCATE TABLE kb_documents RESTART IDENTITY`
     logger.info('PgKB: cleared all documents')
   }
@@ -205,10 +201,8 @@ export class PgKnowledgeBase implements IKnowledgeBase {
   // ── listIds ─────────────────────────────────────────────────────────────────
 
   async listIds(): Promise<string[]> {
-    this.ensureConnected()
-    const rows = await this.sql`
-      SELECT id FROM kb_documents ORDER BY created_at DESC
-    `
+    if (!this.connected) { return []; }
+    const rows = await this.sql`SELECT id FROM kb_documents ORDER BY created_at DESC`
     return rows.map((r: any) => r.id as string)
   }
 

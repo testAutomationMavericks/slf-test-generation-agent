@@ -144,28 +144,24 @@ export class PgApprovalStore implements IApprovalStore {
     }
   }
 
-  private ensureConnected() {
-    if (!this.sql) throw new Error('PgApprovalStore not connected. Check DATABASE_URL.');
+  private get connected(): boolean {
+    return this.sql !== null;
   }
 
   async load(id: string): Promise<ApprovalRequest | null> {
-    this.ensureConnected();
-    const rows = await this.sql`
-      SELECT data FROM approvals WHERE id = ${id}
-    `;
+    if (!this.connected) { logger.warn('PgApprovalStore: not connected, returning null'); return null; }
+    const rows = await this.sql`SELECT data FROM approvals WHERE id = ${id}`;
     return rows[0]?.data ?? null;
   }
 
   async loadAll(): Promise<ApprovalRequest[]> {
-    this.ensureConnected();
-    const rows = await this.sql`
-      SELECT data FROM approvals ORDER BY created_at DESC
-    `;
+    if (!this.connected) { logger.warn('PgApprovalStore: not connected, returning empty list'); return []; }
+    const rows = await this.sql`SELECT data FROM approvals ORDER BY created_at DESC`;
     return rows.map((r: any) => r.data as ApprovalRequest);
   }
 
   async save(approval: ApprovalRequest): Promise<void> {
-    this.ensureConnected();
+    if (!this.connected) { logger.warn(`PgApprovalStore: not connected, cannot save ${approval.id}`); return; }
     await this.sql`
       INSERT INTO approvals (id, data, status)
       VALUES (${approval.id}, ${JSON.stringify(approval)}::jsonb, ${approval.status})
@@ -178,7 +174,7 @@ export class PgApprovalStore implements IApprovalStore {
   }
 
   async delete(id: string): Promise<void> {
-    this.ensureConnected();
+    if (!this.connected) { logger.warn(`PgApprovalStore: not connected, cannot delete ${id}`); return; }
     await this.sql`DELETE FROM approvals WHERE id = ${id}`;
     logger.info(`PgApprovalStore: deleted approval ${id}`);
   }
