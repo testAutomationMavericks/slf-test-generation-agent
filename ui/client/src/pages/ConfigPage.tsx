@@ -104,6 +104,38 @@ function TestBtn({ label, onTest }: { label: string; onTest: () => Promise<{ ok:
   )
 }
 
+function DbTestBtn() {
+  const [steps, setSteps] = useState<Array<{ label: string; ok: boolean; detail?: string }>>([])
+  const [loading, setLoading] = useState(false)
+  const run = async () => {
+    setLoading(true); setSteps([])
+    try {
+      const res = await api.testDb()
+      setSteps(res.steps ?? (res.error ? [{ label: 'Connection', ok: false, detail: res.error }] : []))
+    } catch (e: unknown) {
+      setSteps([{ label: 'Connection', ok: false, detail: String(e) }])
+    } finally { setLoading(false) }
+  }
+  return (
+    <div>
+      <button className="btn btn-secondary" onClick={run} disabled={loading} style={{ fontSize: 11, padding: '5px 12px' }}>
+        {loading ? <span className="spinner" /> : '⚡'} Test EC2 Connection
+      </button>
+      {steps.length > 0 && (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {steps.map((s, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 11, fontFamily: 'var(--mono)' }}>
+              <span style={{ color: s.ok ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>{s.ok ? '✓' : '✗'}</span>
+              <span style={{ color: '#555', flexShrink: 0 }}>{s.label}</span>
+              {s.detail && <span style={{ color: s.ok ? '#888' : 'var(--red)' }}>— {s.detail}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export function ConfigPage({ onSaved }: Props) {
   const [cfg, setCfg] = useState<Partial<UIConfig>>({})
@@ -165,20 +197,29 @@ export function ConfigPage({ onSaved }: Props) {
                 </div>
               )
             })()}
-            <Field label="EC2 Database URL">
-              <TextInput
-                value={String(cfg.databaseUrl ?? '')}
-                onChange={v => set('databaseUrl', v)}
-                placeholder="postgresql://user:password@your-ec2-host:5432/dbname"
-                type="password"
-              />
-            </Field>
+            <div style={S.row}>
+              <Field label="EC2 Connection URL (no database name)">
+                <TextInput
+                  value={String(cfg.databaseUrl ?? '')}
+                  onChange={v => set('databaseUrl', v)}
+                  placeholder="postgresql://user:password@your-ec2-host:5432"
+                  type="password"
+                />
+              </Field>
+              <Field label="Database Name">
+                <TextInput
+                  value={String(cfg.dbName ?? '')}
+                  onChange={v => set('dbName', v)}
+                  placeholder="e.g. testgen_kb"
+                />
+              </Field>
+            </div>
             <div style={{ marginTop: 8 }}>
-              <TestBtn label="Test EC2 Connection" onTest={() => api.testDb()} />
+              <DbTestBtn />
             </div>
             <div style={{ marginTop: 8, fontSize: 11, color: '#888' }}>
-              Provide the URL from your DevOps team. Leave blank to fall back to local storage.
-              Once set, run <code style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>npm run kb:migrate</code> to copy any existing local docs to EC2.
+              Provide details from your DevOps team. Leave blank to fall back to local storage.
+              Once connected, run <code style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>npm run kb:migrate</code> to copy existing local docs to EC2.
             </div>
           </div>
 

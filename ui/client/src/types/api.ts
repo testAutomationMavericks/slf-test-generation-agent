@@ -31,6 +31,7 @@ export interface UIConfig {
   autoSaveToKB: boolean
   kbBackend: KBBackend
   databaseUrl: string
+  dbName: string
 }
 
 export interface JiraIssue {

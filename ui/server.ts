@@ -73,7 +73,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── KB Backend — EC2/pgvector is default; local JSON is fallback only ────────
 function createKB(): IKnowledgeBase {
-  const dbUrl = config.databaseUrl || process.env.DATABASE_URL;
+  const dbUrl = buildDbUrl(config.databaseUrl || process.env.DATABASE_URL, config.dbName || process.env.DB_NAME);
   const apiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
   if (dbUrl && apiKey) {
     console.log('  KB backend: pgvector (EC2)');
@@ -126,7 +126,8 @@ export interface UIConfig {
   // ── General ───────────────────────────────────────────────────────────────
   autoSaveToKB: boolean;
   kbBackend: 'local' | 'pgvector';
-  databaseUrl: string;
+  databaseUrl: string;  // base URL without dbname, e.g. postgresql://user:pass@host:5432
+  dbName: string;       // database name — appended to databaseUrl to form the full connection string
 }
 
 function loadConfig(): UIConfig {
@@ -163,7 +164,25 @@ function loadConfig(): UIConfig {
     autoSaveToKB: false,
     kbBackend: process.env.DATABASE_URL ? 'pgvector' : 'local',
     databaseUrl: process.env.DATABASE_URL ?? '',
+    dbName: process.env.DB_NAME ?? '',
   };
+}
+
+// Builds the full PostgreSQL connection string from base URL + dbName field.
+// If databaseUrl already contains a path (dbname), dbName overrides it.
+function buildDbUrl(baseUrl?: string, dbName?: string): string {
+  const url = (baseUrl || '').trim();
+  if (!url) return '';
+  const name = (dbName || '').trim();
+  if (!name) return url;
+  try {
+    const u = new URL(url);
+    u.pathname = '/' + name;
+    return u.toString();
+  } catch {
+    // Not a valid URL — append as-is
+    return url.replace(/\/[^/]*$/, '') + '/' + name;
+  }
 }
 
 function saveConfig(c: UIConfig) {
@@ -176,7 +195,7 @@ let config = loadConfig();
 db = createKB();
 approvalStore = createApprovalStore({
   filePath: path.join(ROOT, 'approvals.json'),
-  databaseUrl: config.databaseUrl || process.env.DATABASE_URL,
+  databaseUrl: buildDbUrl(config.databaseUrl || process.env.DATABASE_URL, config.dbName || process.env.DB_NAME) || undefined,
 });
 
 // ─── WebSocket broadcast ──────────────────────────────────────────────────────
@@ -603,10 +622,10 @@ app.post('/api/config', async (req, res) => {
   saveConfig(config);
   syncMCPJson(); // keep .mcp.json in sync whenever config changes
 
-  // Hot-swap KB + approval store if database URL changed
-  const newDbUrl = config.databaseUrl || process.env.DATABASE_URL || '';
+  // Hot-swap KB + approval store if database config changed
+  const newDbUrl = buildDbUrl(config.databaseUrl || process.env.DATABASE_URL, config.dbName || process.env.DB_NAME);
   if (newDbUrl !== prevDbUrl) {
-    console.log(`  Switching KB backend due to DATABASE_URL change`);
+    console.log(`  Switching KB backend due to database config change`);
     if ('disconnect' in db && typeof (db as any).disconnect === 'function') {
       await (db as any).disconnect().catch(() => {});
     }
@@ -1012,18 +1031,60 @@ app.get('/api/test/zephyr', async (_req, res) => {
 });
 
 app.get('/api/test/db', async (_req, res) => {
-  const dbUrl = config.databaseUrl || process.env.DATABASE_URL;
-  if (!dbUrl) return res.json({ ok: false, error: 'No Database URL configured — paste the EC2 connection URL in Config first.' });
+  const baseUrl = (config.databaseUrl || process.env.DATABASE_URL || '').trim();
+  const dbName  = (config.dbName || process.env.DB_NAME || '').trim();
+  if (!baseUrl) return res.json({ ok: false, steps: [], error: 'No Database URL configured.' });
+
+  const steps: Array<{ label: string; ok: boolean; detail?: string }> = [];
+  const { default: postgres } = await import('postgres');
+  const opts = { ssl: 'require' as const, max: 1, connect_timeout: 10, idle_timeout: 5 };
+
+  // Step 1: host reachable — connect to the base URL (no specific dbname)
   try {
-    const { default: postgres } = await import('postgres');
-    const sql = postgres(dbUrl, { ssl: 'require', max: 1, connect_timeout: 10, idle_timeout: 5 });
-    const [row] = await sql`SELECT version() AS v`;
-    await sql.end();
+    const hostUrl = baseUrl.replace(/\/[^/]+$/, '/postgres'); // swap dbname for 'postgres'
+    const sql1 = postgres(hostUrl, opts);
+    const [row] = await sql1`SELECT version() AS v`;
+    await sql1.end();
     const version = (row?.v as string ?? '').split(' ').slice(0, 2).join(' ');
-    res.json({ ok: true, detail: `Connected — ${version}` });
+    steps.push({ label: 'Host reachable', ok: true, detail: version });
   } catch (e: unknown) {
-    res.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    steps.push({ label: 'Host reachable', ok: false, detail: e instanceof Error ? e.message : String(e) });
+    return res.json({ ok: false, steps });
   }
+
+  // Step 2: target database accessible
+  const fullUrl = buildDbUrl(baseUrl, dbName);
+  try {
+    const sql2 = postgres(fullUrl, opts);
+    await sql2`SELECT 1`;
+    await sql2.end();
+    steps.push({ label: `Database "${dbName || new URL(baseUrl).pathname.replace('/', '')}" accessible`, ok: true });
+  } catch (e: unknown) {
+    steps.push({ label: 'Database accessible', ok: false, detail: e instanceof Error ? e.message : String(e) });
+    return res.json({ ok: false, steps });
+  }
+
+  // Step 3: schema ready — check both required tables exist
+  try {
+    const sql3 = postgres(fullUrl, opts);
+    const rows = await sql3`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name IN ('kb_documents', 'approvals')
+    `;
+    await sql3.end();
+    const found = rows.map((r: any) => r.table_name as string);
+    const missing = ['kb_documents', 'approvals'].filter(t => !found.includes(t));
+    if (missing.length > 0) {
+      steps.push({ label: 'Schema ready', ok: false, detail: `Missing tables: ${missing.join(', ')} — run src/kb/schema.sql` });
+      return res.json({ ok: false, steps });
+    }
+    steps.push({ label: 'Schema ready', ok: true, detail: 'kb_documents + approvals tables found' });
+  } catch (e: unknown) {
+    steps.push({ label: 'Schema ready', ok: false, detail: e instanceof Error ? e.message : String(e) });
+    return res.json({ ok: false, steps });
+  }
+
+  res.json({ ok: true, steps });
 });
 
 // Jira

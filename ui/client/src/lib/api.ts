@@ -70,7 +70,11 @@ export const api = {
   testZephyr: () =>
     fetch('/api/test/zephyr').then(r => r.json()) as Promise<{ ok: boolean; detail?: string; error?: string }>,
   testDb: () =>
-    fetch('/api/test/db').then(r => r.json()) as Promise<{ ok: boolean; detail?: string; error?: string }>,
+    fetch('/api/test/db').then(r => r.json()) as Promise<{
+      ok: boolean;
+      steps?: Array<{ label: string; ok: boolean; detail?: string }>;
+      error?: string;
+    }>,
 
   // Generate (SSE stream)
   generateStream: (issueKey: string | undefined, prompt: string): EventSource => {
