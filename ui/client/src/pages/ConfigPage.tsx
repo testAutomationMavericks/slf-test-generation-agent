@@ -173,7 +173,10 @@ export function ConfigPage({ onSaved }: Props) {
                 type="password"
               />
             </Field>
-            <div style={{ marginTop: 4, fontSize: 11, color: '#888' }}>
+            <div style={{ marginTop: 8 }}>
+              <TestBtn label="Test EC2 Connection" onTest={() => api.testDb()} />
+            </div>
+            <div style={{ marginTop: 8, fontSize: 11, color: '#888' }}>
               Provide the URL from your DevOps team. Leave blank to fall back to local storage.
               Once set, run <code style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>npm run kb:migrate</code> to copy any existing local docs to EC2.
             </div>

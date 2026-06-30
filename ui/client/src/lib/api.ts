@@ -69,6 +69,8 @@ export const api = {
     fetch('/api/test/confluence').then(r => r.json()) as Promise<{ ok: boolean; detail?: string; error?: string }>,
   testZephyr: () =>
     fetch('/api/test/zephyr').then(r => r.json()) as Promise<{ ok: boolean; detail?: string; error?: string }>,
+  testDb: () =>
+    fetch('/api/test/db').then(r => r.json()) as Promise<{ ok: boolean; detail?: string; error?: string }>,
 
   // Generate (SSE stream)
   generateStream: (issueKey: string | undefined, prompt: string): EventSource => {

@@ -1011,6 +1011,21 @@ app.get('/api/test/zephyr', async (_req, res) => {
   }
 });
 
+app.get('/api/test/db', async (_req, res) => {
+  const dbUrl = config.databaseUrl || process.env.DATABASE_URL;
+  if (!dbUrl) return res.json({ ok: false, error: 'No Database URL configured — paste the EC2 connection URL in Config first.' });
+  try {
+    const { default: postgres } = await import('postgres');
+    const sql = postgres(dbUrl, { ssl: 'require', max: 1, connect_timeout: 10, idle_timeout: 5 });
+    const [row] = await sql`SELECT version() AS v`;
+    await sql.end();
+    const version = (row?.v as string ?? '').split(' ').slice(0, 2).join(' ');
+    res.json({ ok: true, detail: `Connected — ${version}` });
+  } catch (e: unknown) {
+    res.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 // Jira
 app.get('/api/jira/issues', async (req, res) => {
   try {
