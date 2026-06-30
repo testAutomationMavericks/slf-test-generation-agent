@@ -1039,10 +1039,11 @@ app.get('/api/test/db', async (_req, res) => {
   const { default: postgres } = await import('postgres');
   const opts = { ssl: 'require' as const, max: 1, connect_timeout: 10, idle_timeout: 5 };
 
-  // Step 1: host reachable — connect to the base URL (no specific dbname)
+  // Step 1: host reachable — connect to the 'postgres' system db to test just the host/auth
   try {
-    const hostUrl = baseUrl.replace(/\/[^/]+$/, '/postgres'); // swap dbname for 'postgres'
-    const sql1 = postgres(hostUrl, opts);
+    const u = new URL(baseUrl);
+    u.pathname = '/postgres';
+    const sql1 = postgres(u.toString(), opts);
     const [row] = await sql1`SELECT version() AS v`;
     await sql1.end();
     const version = (row?.v as string ?? '').split(' ').slice(0, 2).join(' ');

@@ -111,7 +111,8 @@ function DbTestBtn() {
     setLoading(true); setSteps([])
     try {
       const res = await api.testDb()
-      setSteps(res.steps ?? (res.error ? [{ label: 'Connection', ok: false, detail: res.error }] : []))
+      const s = res.steps ?? []
+      setSteps(s.length > 0 ? s : [{ label: 'Connection', ok: res.ok, detail: res.error ?? (res.ok ? 'OK' : 'Unknown error') }])
     } catch (e: unknown) {
       setSteps([{ label: 'Connection', ok: false, detail: String(e) }])
     } finally { setLoading(false) }
