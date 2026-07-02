@@ -119,6 +119,58 @@ export class PgKnowledgeBase implements IKnowledgeBase {
         updated_at = NOW()
     `
     logger.info(`PgKB: upserted "${doc.id}" (${doc.source})`)
+    await this.runDuplicateCheck(doc.id, embedding)
+  }
+
+  // Runs after every EC2 write. Flags near-duplicates; auto-deletes near-identical ones.
+  // Non-fatal — a dedup failure never blocks the write.
+  private async runDuplicateCheck(docId: string, embedding: number[]): Promise<void> {
+    const autoDelete = parseFloat(process.env.KB_AUTO_DELETE_THRESHOLD || '0.97')
+    const flag       = parseFloat(process.env.KB_FLAG_THRESHOLD        || '0.90')
+
+    try {
+      const candidates = await this.sql`
+        SELECT * FROM find_duplicates(
+          ${JSON.stringify(embedding)}::vector,
+          ${docId}::text,
+          ${flag}
+        )
+      ` as Array<{ id: string; title: string; similarity: string }>
+
+      for (const c of candidates) {
+        const sim = Number(c.similarity)
+
+        if (sim >= autoDelete) {
+          await this.sql`DELETE FROM kb_documents WHERE id = ${c.id}`
+          await this.sql`
+            INSERT INTO duplicate_log (new_entry_id, old_entry_id, old_entry_title, similarity, action_taken)
+            VALUES (${docId}, ${c.id}, ${c.title}, ${sim}, 'auto_deleted')
+          `
+          logger.warn(`PgKB dedup: auto-deleted "${c.title}" (${(sim * 100).toFixed(1)}% match)`)
+        } else {
+          await this.sql`
+            UPDATE kb_documents
+            SET outdated        = true,
+                outdated_reason = ${'Possible duplicate of a more recently added entry'},
+                outdated_at     = NOW(),
+                duplicate_of    = ${docId}
+            WHERE id = ${c.id}
+              AND (outdated IS NULL OR outdated = false)
+          `
+          await this.sql`
+            INSERT INTO duplicate_log (new_entry_id, old_entry_id, old_entry_title, similarity, action_taken)
+            VALUES (${docId}, ${c.id}, ${c.title}, ${sim}, 'flagged')
+          `
+          logger.warn(`PgKB dedup: flagged "${c.title}" (${(sim * 100).toFixed(1)}% match)`)
+        }
+      }
+
+      if (candidates.length > 0) {
+        logger.info(`PgKB dedup: processed ${candidates.length} candidate(s) for "${docId}"`)
+      }
+    } catch (e) {
+      logger.warn('PgKB: duplicate check failed (non-fatal):', e)
+    }
   }
 
   // ── addDocuments ────────────────────────────────────────────────────────────
