@@ -78,7 +78,7 @@ export class PgKnowledgeBase implements IKnowledgeBase {
     try {
       const { default: postgres } = await import('postgres')
       this.sql = postgres(connectionUrl, {
-        ssl: 'require',
+        ssl: process.env.DB_SSL === 'false' ? false : 'require',
         max: 10,
         idle_timeout: 30,
         connect_timeout: 10,

@@ -122,7 +122,7 @@ export class PgApprovalStore implements IApprovalStore {
     try {
       const { default: postgres } = await import('postgres');
       this.sql = postgres(this.connectionUrl, {
-        ssl: 'require',
+        ssl: process.env.DB_SSL === 'false' ? false : 'require',
         max: 5,
         idle_timeout: 30,
         connect_timeout: 10,
