@@ -105,12 +105,16 @@ export class LocalApprovalStore implements IApprovalStore {
 }
 
 // ─── PostgreSQL store (Phase 2) ───────────────────────────────────────────────
+// Falls back to LocalApprovalStore automatically when postgres is unreachable,
+// so approvals are never silently lost while EC2 is not yet available.
 
 export class PgApprovalStore implements IApprovalStore {
   readonly backend = 'postgres' as const;
   private sql: any = null;
+  private fallback: LocalApprovalStore;
 
-  constructor(private connectionUrl: string) {
+  constructor(private connectionUrl: string, fallbackPath: string) {
+    this.fallback = new LocalApprovalStore(fallbackPath);
     this.connect();
   }
 
@@ -139,7 +143,7 @@ export class PgApprovalStore implements IApprovalStore {
       `;
       logger.info('PgApprovalStore: connected to PostgreSQL');
     } catch (e) {
-      logger.warn('PgApprovalStore: connection failed, falling back to no-op —', e);
+      logger.warn('PgApprovalStore: EC2 not reachable, using local approvals.json until reconnected —', e);
       this.sql = null;
     }
   }
@@ -149,19 +153,22 @@ export class PgApprovalStore implements IApprovalStore {
   }
 
   async load(id: string): Promise<ApprovalRequest | null> {
-    if (!this.connected) { logger.warn('PgApprovalStore: not connected, returning null'); return null; }
+    if (!this.connected) { return this.fallback.load(id); }
     const rows = await this.sql`SELECT data FROM approvals WHERE id = ${id}`;
     return rows[0]?.data ?? null;
   }
 
   async loadAll(): Promise<ApprovalRequest[]> {
-    if (!this.connected) { logger.warn('PgApprovalStore: not connected, returning empty list'); return []; }
+    if (!this.connected) { return this.fallback.loadAll(); }
     const rows = await this.sql`SELECT data FROM approvals ORDER BY created_at DESC`;
     return rows.map((r: any) => r.data as ApprovalRequest);
   }
 
   async save(approval: ApprovalRequest): Promise<void> {
-    if (!this.connected) { logger.warn(`PgApprovalStore: not connected, cannot save ${approval.id}`); return; }
+    if (!this.connected) {
+      logger.warn(`PgApprovalStore: EC2 not reachable — saving "${approval.id}" to local approvals.json`);
+      return this.fallback.save(approval);
+    }
     await this.sql`
       INSERT INTO approvals (id, data, status)
       VALUES (${approval.id}, ${JSON.stringify(approval)}::jsonb, ${approval.status})
@@ -174,7 +181,7 @@ export class PgApprovalStore implements IApprovalStore {
   }
 
   async delete(id: string): Promise<void> {
-    if (!this.connected) { logger.warn(`PgApprovalStore: not connected, cannot delete ${id}`); return; }
+    if (!this.connected) { return this.fallback.delete(id); }
     await this.sql`DELETE FROM approvals WHERE id = ${id}`;
     logger.info(`PgApprovalStore: deleted approval ${id}`);
   }
@@ -191,9 +198,9 @@ export function createApprovalStore(opts: {
   databaseUrl?: string;
 }): IApprovalStore {
   if (opts.databaseUrl) {
-    logger.info('Approval store: PostgreSQL (EC2)');
-    return new PgApprovalStore(opts.databaseUrl);
+    logger.info('Approval store: PostgreSQL (EC2) with local fallback');
+    return new PgApprovalStore(opts.databaseUrl, opts.filePath);
   }
-  logger.info('Approval store: local JSON (fallback)');
+  logger.info('Approval store: local JSON');
   return new LocalApprovalStore(opts.filePath);
 }
