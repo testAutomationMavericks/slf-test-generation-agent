@@ -1,7 +1,7 @@
 {
   "name": "atlassian-test-agent",
   "version": "1.0.0",
-  "description": "Claude-powered test case generator \u2014 Jira \u00b7 Confluence \u00b7 Zephyr \u00b7 Local UI",
+  "description": "Claude-powered test case generator — Jira · Confluence · Zephyr · Local UI",
   "type": "module",
   "scripts": {
     "ui": "tsx ui/server.ts & vite & wait",
@@ -27,25 +27,28 @@
     "test:unit:watch": "npx tsx --test --watch tests/unit/*.test.ts",
     "test:unit:verbose": "npx tsx --test tests/unit/*.test.ts",
     "kb:migrate": "tsx src/kb/migrate.ts",
-    "kb:schema": "echo \"Apply src/kb/schema.sql to your PostgreSQL database\""
+    "kb:schema": "echo \"Apply src/kb/schema.sql to your PostgreSQL database\"",
+    "kb": "node tma/scanner/manage.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^1.11.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.0",
-    "ws": "^8.17.0",
-    "zod": "^3.24.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "vite": "^5.4.0",
-    "@vitejs/plugin-react": "^4.3.0",
-    "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0"
+    "ws": "^8.17.0",
+    "zod": "^3.24.0"
   },
   "optionalDependencies": {
+    "@inquirer/prompts": "^7.10.1",
     "openai": "^4.52.0",
+    "pg": "^8.22.0",
     "postgres": "^3.4.5"
   },
   "devDependencies": {
