@@ -1037,20 +1037,27 @@ app.get('/api/test/db', async (_req, res) => {
 
   const steps: Array<{ label: string; ok: boolean; detail?: string }> = [];
   const { default: postgres } = await import('postgres');
-  const opts = { ssl: 'require' as const, max: 1, connect_timeout: 10, idle_timeout: 5 };
+  const ssl = process.env.DB_SSL === 'require' ? ('require' as const) : false;
+  const opts = { ssl, max: 1, connect_timeout: 10, idle_timeout: 5 };
 
-  // Step 1: host reachable — connect to the 'postgres' system db to test just the host/auth
+  // Step 1: host reachable — connect to the target db; distinguish network errors from auth/db errors
   try {
-    const u = new URL(baseUrl);
-    u.pathname = '/postgres';
-    const sql1 = postgres(u.toString(), opts);
+    const fullUrl = buildDbUrl(baseUrl, dbName);
+    const sql1 = postgres(fullUrl, opts);
     const [row] = await sql1`SELECT version() AS v`;
     await sql1.end();
     const version = (row?.v as string ?? '').split(' ').slice(0, 2).join(' ');
     steps.push({ label: 'Host reachable', ok: true, detail: version });
   } catch (e: unknown) {
-    steps.push({ label: 'Host reachable', ok: false, detail: e instanceof Error ? e.message : String(e) });
-    return res.json({ ok: false, steps });
+    const msg = e instanceof Error ? e.message : String(e);
+    // If it's a network-level failure the host is unreachable; auth/db errors mean host IS up
+    const hostUnreachable = /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|connect timeout/i.test(msg);
+    if (hostUnreachable) {
+      steps.push({ label: 'Host reachable', ok: false, detail: msg });
+      return res.json({ ok: false, steps });
+    }
+    // Host responded (auth error, db missing etc.) — host is reachable, continue to step 2
+    steps.push({ label: 'Host reachable', ok: true, detail: 'Host up (proceeding to check database)' });
   }
 
   // Step 2: target database accessible
