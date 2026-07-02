@@ -1,4 +1,5 @@
 import pg from 'pg'
+import { randomUUID } from 'crypto'
 import dotenv from 'dotenv'
 import { detectAndHandleDuplicates } from './duplicateDetector.js'
 dotenv.config()
@@ -46,19 +47,31 @@ export async function retrieveKB(query, topK = 8) {
 
   const res = await db.query(`
     SELECT
-      id, title, feature, sprint, steps, zephyr_key, tags,
-      outdated, outdated_reason,
+      id,
+      content,
+      metadata->>'title'        AS title,
+      metadata->>'feature_area' AS feature,
+      metadata->>'sprint'       AS sprint,
+      metadata->'steps'         AS steps,
+      metadata->>'zephyr_key'   AS zephyr_key,
+      metadata->'tags'          AS tags,
+      metadata->>'approved_by'  AS approved_by,
+      outdated,
+      outdated_reason,
       1 - (embedding <=> $1::vector) AS similarity
-    FROM   test_knowledge
-    WHERE  outdated = false
+    FROM   kb_documents
+    WHERE  (outdated IS NULL OR outdated = false)
     ORDER  BY embedding <=> $1::vector
     LIMIT  $2
   `, [JSON.stringify(embedding), topK])
 
   // Warn if any high-similarity result was skipped due to being outdated
   const outdatedCheck = await db.query(`
-    SELECT title, outdated_reason, 1 - (embedding <=> $1::vector) AS similarity
-    FROM   test_knowledge
+    SELECT
+      metadata->>'title' AS title,
+      outdated_reason,
+      1 - (embedding <=> $1::vector) AS similarity
+    FROM   kb_documents
     WHERE  outdated = true
       AND  1 - (embedding <=> $1::vector) > 0.85
     ORDER  BY similarity DESC
@@ -89,36 +102,30 @@ export async function writeToKB(approvedTest, jiraIssueKey) {
 
   const embedding = await embed(textToEmbed)
 
-  const res = await db.query(`
-    INSERT INTO test_knowledge (
-      title, objective, feature, component, sprint,
-      test_type, jira_key, zephyr_key, steps,
-      tags, embedding, approved_by, approved_at
-    ) VALUES (
-      $1, $2, $3, $4, $5,
-      $6, $7, $8, $9,
-      $10, $11::vector, $12, NOW()
-    )
-    RETURNING id
-  `, [
-    approvedTest.title,
-    approvedTest.objective   || null,
-    approvedTest.feature,
-    approvedTest.component   || null,
-    approvedTest.sprint      || null,
-    approvedTest.testType    || 'functional',
-    approvedTest.jiraKey     || null,
-    approvedTest.zephyrKey   || null,
-    JSON.stringify(steps),
-    approvedTest.tags        || [],
-    JSON.stringify(embedding),
-    approvedTest.approvedBy  || 'system'
-  ])
+  const metadata = {
+    title:          approvedTest.title,
+    feature_area:   approvedTest.feature || approvedTest.featureArea || null,
+    component:      approvedTest.component || null,
+    sprint:         approvedTest.sprint || null,
+    zephyr_key:     approvedTest.zephyrKey || null,
+    jira_issue_key: approvedTest.jiraKey || null,
+    approved_by:    approvedTest.approvedBy || 'system',
+    doc_type:       'test_case',
+    test_type:      approvedTest.testType || 'functional',
+    steps,
+    tags:           approvedTest.tags || [],
+  }
 
-  const newEntryId = res.rows[0].id
-  const newEntry   = { ...approvedTest, id: newEntryId, embedding }
+  const id = `test:${randomUUID()}`
 
-  console.log(`  ✓ Written to KB: "${approvedTest.title}" (id: ${newEntryId})`)
+  await db.query(`
+    INSERT INTO kb_documents (id, source, content, embedding, metadata)
+    VALUES ($1, 'generated', $2, $3::vector, $4::jsonb)
+    ON CONFLICT (id) DO NOTHING
+  `, [id, textToEmbed.slice(0, 8000), JSON.stringify(embedding), JSON.stringify(metadata)])
+
+  const newEntry = { ...approvedTest, id, embedding, metadata }
+  console.log(`  ✓ Written to KB: "${approvedTest.title}" (id: ${id})`)
 
   await detectAndHandleDuplicates(newEntry, jiraIssueKey)
 

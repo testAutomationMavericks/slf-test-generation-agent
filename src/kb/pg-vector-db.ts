@@ -143,6 +143,7 @@ export class PgKnowledgeBase implements IKnowledgeBase {
         FROM kb_documents
         WHERE source = ${filter.source}
           AND metadata->>'jira_issue_key' = ${filter.jira_issue_key}
+          AND (outdated IS NULL OR outdated = false)
         ORDER BY embedding <=> ${JSON.stringify(queryVec)}::vector
         LIMIT ${topK}
       `
@@ -152,6 +153,7 @@ export class PgKnowledgeBase implements IKnowledgeBase {
                1 - (embedding <=> ${JSON.stringify(queryVec)}::vector) AS score
         FROM kb_documents
         WHERE source = ${filter.source}
+          AND (outdated IS NULL OR outdated = false)
         ORDER BY embedding <=> ${JSON.stringify(queryVec)}::vector
         LIMIT ${topK}
       `
@@ -161,6 +163,7 @@ export class PgKnowledgeBase implements IKnowledgeBase {
                1 - (embedding <=> ${JSON.stringify(queryVec)}::vector) AS score
         FROM kb_documents
         WHERE metadata->>'jira_issue_key' = ${filter.jira_issue_key}
+          AND (outdated IS NULL OR outdated = false)
         ORDER BY embedding <=> ${JSON.stringify(queryVec)}::vector
         LIMIT ${topK}
       `
@@ -169,6 +172,7 @@ export class PgKnowledgeBase implements IKnowledgeBase {
         SELECT id, content, metadata,
                1 - (embedding <=> ${JSON.stringify(queryVec)}::vector) AS score
         FROM kb_documents
+        WHERE (outdated IS NULL OR outdated = false)
         ORDER BY embedding <=> ${JSON.stringify(queryVec)}::vector
         LIMIT ${topK}
       `
@@ -225,6 +229,50 @@ export class PgKnowledgeBase implements IKnowledgeBase {
     } catch {
       return { total: 0, backend: 'pgvector' }
     }
+  }
+
+  // ── scanAndFlagDuplicates ────────────────────────────────────────────────────
+  // Used by migrate.ts post-migration. Flags near-duplicates; never auto-deletes.
+
+  async scanAndFlagDuplicates(threshold = 0.90): Promise<{ scanned: number; flagged: number }> {
+    if (!this.connected || !this.sql) return { scanned: 0, flagged: 0 }
+
+    const entries = await this.sql<Array<{ id: string }>>`
+      SELECT id FROM kb_documents
+      WHERE (outdated IS NULL OR outdated = false) AND embedding IS NOT NULL
+    `
+
+    let flagged = 0
+
+    for (const entry of entries) {
+      const dupes = await this.sql`
+        SELECT id, COALESCE(metadata->>'title', id) AS title
+        FROM find_duplicates(
+          (SELECT embedding FROM kb_documents WHERE id = ${entry.id}),
+          ${entry.id}::text,
+          ${threshold}
+        )
+      `
+
+      for (const dupe of dupes as Array<{ id: string; title: string }>) {
+        const updated = await this.sql`
+          UPDATE kb_documents
+          SET outdated        = true,
+              outdated_reason = 'Flagged as possible duplicate during migration scan',
+              outdated_at     = NOW(),
+              duplicate_of    = ${entry.id}
+          WHERE id = ${dupe.id}
+            AND (outdated IS NULL OR outdated = false)
+          RETURNING id
+        `
+        if (updated.length > 0) {
+          flagged++
+          logger.info(`PgKB scan: flagged "${dupe.title}" as duplicate of ${entry.id}`)
+        }
+      }
+    }
+
+    return { scanned: entries.length, flagged }
   }
 
   // ── disconnect ───────────────────────────────────────────────────────────────

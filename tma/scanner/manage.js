@@ -45,11 +45,17 @@ if (action === 'stats') {
 if (action === 'search') {
   const query = await input({ message: 'Search term (title / feature / zephyr key):' })
   const res   = await db.query(`
-    SELECT id, title, feature, sprint, zephyr_key, outdated, created_at
-    FROM   test_knowledge
-    WHERE  title       ILIKE $1
-        OR feature     ILIKE $1
-        OR zephyr_key  ILIKE $1
+    SELECT id,
+           metadata->>'title'        AS title,
+           metadata->>'feature_area' AS feature,
+           metadata->>'sprint'       AS sprint,
+           metadata->>'zephyr_key'   AS zephyr_key,
+           outdated,
+           created_at
+    FROM   kb_documents
+    WHERE  metadata->>'title'        ILIKE $1
+        OR metadata->>'feature_area' ILIKE $1
+        OR metadata->>'zephyr_key'   ILIKE $1
     ORDER  BY created_at DESC
     LIMIT  20
   `, [`%${query}%`])
@@ -106,9 +112,14 @@ if (action === 'duplog') {
 if (action === 'flag') {
   const query = await input({ message: 'Feature or title to search:' })
   const res   = await db.query(`
-    SELECT id, title, feature, sprint, zephyr_key
-    FROM   test_knowledge
-    WHERE  title ILIKE $1 OR feature ILIKE $1
+    SELECT id,
+           metadata->>'title'        AS title,
+           metadata->>'feature_area' AS feature,
+           metadata->>'sprint'       AS sprint,
+           metadata->>'zephyr_key'   AS zephyr_key
+    FROM   kb_documents
+    WHERE  metadata->>'title'        ILIKE $1
+        OR metadata->>'feature_area' ILIKE $1
     LIMIT  10
   `, [`%${query}%`])
 
@@ -128,7 +139,7 @@ if (action === 'flag') {
   })
 
   await db.query(`
-    UPDATE test_knowledge
+    UPDATE kb_documents
     SET    outdated        = true,
            outdated_reason = $1,
            outdated_at     = NOW()
@@ -144,9 +155,15 @@ if (action === 'flag') {
 if (action === 'delete') {
   const query = await input({ message: 'Feature or title to search:' })
   const res   = await db.query(`
-    SELECT id, title, feature, sprint, zephyr_key, outdated
-    FROM   test_knowledge
-    WHERE  title ILIKE $1 OR feature ILIKE $1
+    SELECT id,
+           metadata->>'title'        AS title,
+           metadata->>'feature_area' AS feature,
+           metadata->>'sprint'       AS sprint,
+           metadata->>'zephyr_key'   AS zephyr_key,
+           outdated
+    FROM   kb_documents
+    WHERE  metadata->>'title'        ILIKE $1
+        OR metadata->>'feature_area' ILIKE $1
     LIMIT  10
   `, [`%${query}%`])
 
@@ -167,7 +184,7 @@ if (action === 'delete') {
 
   if (!ok) { console.log('\n  Cancelled.\n'); await db.end(); process.exit(0) }
 
-  await db.query(`DELETE FROM test_knowledge WHERE id = $1`, [id])
+  await db.query(`DELETE FROM kb_documents WHERE id = $1`, [id])
   console.log('\n  ✓ Entry permanently deleted from KB.')
   console.log('    Remember to archive the test in Zephyr Scale manually.\n')
 }
@@ -180,7 +197,7 @@ if (action === 'purge') {
   })
 
   const countRes = await db.query(
-    `SELECT COUNT(*) AS count FROM test_knowledge WHERE feature ILIKE $1`,
+    `SELECT COUNT(*) AS count FROM kb_documents WHERE metadata->>'feature_area' ILIKE $1`,
     [`%${feature}%`]
   )
   const count = parseInt(countRes.rows[0].count)
@@ -194,7 +211,7 @@ if (action === 'purge') {
 
   if (!ok) { console.log('\n  Cancelled.\n'); await db.end(); process.exit(0) }
 
-  await db.query(`DELETE FROM test_knowledge WHERE feature ILIKE $1`, [`%${feature}%`])
+  await db.query(`DELETE FROM kb_documents WHERE metadata->>'feature_area' ILIKE $1`, [`%${feature}%`])
   console.log(`\n  ✓ Deleted ${count} entries for "${feature}" from KB.`)
   console.log('    Remember to archive corresponding tests in Zephyr Scale manually.\n')
 }
@@ -207,17 +224,26 @@ if (action === 'scan') {
   })
   if (!ok) { await db.end(); process.exit(0) }
 
-  const all = await db.query(
-    `SELECT id, title, feature, sprint, zephyr_key, embedding FROM test_knowledge WHERE outdated = false`
-  )
+  const all = await db.query(`
+    SELECT id,
+           metadata->>'title'  AS title,
+           metadata->>'sprint' AS sprint
+    FROM   kb_documents
+    WHERE  (outdated IS NULL OR outdated = false)
+      AND  embedding IS NOT NULL
+  `)
   console.log(`\n  Scanning ${all.rows.length} active entries...\n`)
 
   let duplicatesFound = 0
 
   for (const entry of all.rows) {
     const dupes = await db.query(
-      `SELECT * FROM find_duplicates($1::vector, $2, $3)`,
-      [JSON.stringify(entry.embedding), entry.id, 0.90]
+      `SELECT * FROM find_duplicates(
+         (SELECT embedding FROM kb_documents WHERE id = $1),
+         $1::text,
+         0.90
+       )`,
+      [entry.id]
     )
     if (dupes.rows.length > 0) {
       duplicatesFound++

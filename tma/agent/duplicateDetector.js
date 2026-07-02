@@ -17,7 +17,7 @@ export async function detectAndHandleDuplicates(newEntry, jiraIssueKey) {
   console.log(`\n  Running duplicate check for "${newEntry.title}"...`)
 
   const res = await db.query(
-    `SELECT * FROM find_duplicates($1::vector, $2, $3)`,
+    `SELECT * FROM find_duplicates($1::vector, $2::text, $3)`,
     [JSON.stringify(newEntry.embedding), newEntry.id, FLAG_THRESHOLD]
   )
 
@@ -37,7 +37,7 @@ export async function detectAndHandleDuplicates(newEntry, jiraIssueKey) {
 
     if (sim >= AUTO_DELETE_THRESHOLD) {
       // Near-identical — auto-delete the older one, keep the new one
-      await db.query(`DELETE FROM test_knowledge WHERE id = $1`, [candidate.id])
+      await db.query(`DELETE FROM kb_documents WHERE id = $1`, [candidate.id])
 
       await db.query(`
         INSERT INTO duplicate_log
@@ -51,14 +51,14 @@ export async function detectAndHandleDuplicates(newEntry, jiraIssueKey) {
     } else {
       // Probable duplicate — flag the older one as outdated
       await db.query(`
-        UPDATE test_knowledge
+        UPDATE kb_documents
         SET    outdated        = true,
                outdated_reason = $1,
                outdated_at     = NOW(),
                duplicate_of    = $2
         WHERE  id = $3
       `, [
-        `Possible duplicate of "${newEntry.title}" added in ${newEntry.sprint || 'latest sprint'}`,
+        `Possible duplicate of "${newEntry.title}" added in ${newEntry.metadata?.sprint || newEntry.sprint || 'latest sprint'}`,
         newEntry.id,
         candidate.id
       ])
@@ -84,9 +84,11 @@ export async function detectAndHandleDuplicates(newEntry, jiraIssueKey) {
 }
 
 async function postDuplicateWarningToJira({ jiraIssueKey, newEntry, autoDeleted, flagged }) {
+  const sprint = newEntry.metadata?.sprint || newEntry.sprint || 'latest sprint'
+
   const lines = [
     `⚠️ *Duplicate test cases detected by TMA*\n`,
-    `New test case added to KB: *${newEntry.title}* (${newEntry.sprint || 'latest sprint'})\n`
+    `New test case added to KB: *${newEntry.title}* (${sprint})\n`
   ]
 
   if (autoDeleted.length > 0) {
@@ -103,7 +105,7 @@ async function postDuplicateWarningToJira({ jiraIssueKey, newEntry, autoDeleted,
     autoDeleted.forEach(d => {
       if (d.zephyr_key) {
         lines.push(`  • Please *archive or delete* test case *${d.zephyr_key}* in Zephyr Scale`)
-        lines.push(`    It has been superseded by the new test case in ${newEntry.sprint || 'latest sprint'}`)
+        lines.push(`    It has been superseded by the new test case in ${sprint}`)
       }
     })
     lines.push(``)
@@ -131,7 +133,6 @@ async function postDuplicateWarningToJira({ jiraIssueKey, newEntry, autoDeleted,
 
   const commentBody = lines.join('\n')
 
-  // Uses JIRA_USERNAME + JIRA_API_TOKEN (consistent with existing .env)
   const auth = Buffer.from(
     `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
   ).toString('base64')

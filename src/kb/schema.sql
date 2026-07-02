@@ -7,21 +7,32 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 -- 2. Main KB table
 CREATE TABLE IF NOT EXISTS kb_documents (
-  id          TEXT PRIMARY KEY,
-  source      TEXT NOT NULL CHECK (source IN ('jira', 'zephyr', 'confluence', 'generated')),
-  content     TEXT NOT NULL,
-  embedding   vector(1024),          -- voyage-3 produces 1024-dimension vectors
-  metadata    JSONB DEFAULT '{}',
-  created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ DEFAULT NOW()
+  id              TEXT PRIMARY KEY,
+  source          TEXT NOT NULL CHECK (source IN ('jira', 'zephyr', 'confluence', 'generated')),
+  content         TEXT NOT NULL,
+  embedding       vector(1024),          -- voyage-3 produces 1024-dimension vectors
+  metadata        JSONB DEFAULT '{}',
+  outdated        boolean     NOT NULL DEFAULT false,
+  outdated_reason text,
+  outdated_at     timestamptz,
+  duplicate_of    text        REFERENCES kb_documents(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 3. Vector similarity index (ivfflat — good for <1M docs, fast to build)
---    Switch to hnsw for >1M docs: CREATE INDEX ... USING hnsw (embedding vector_cosine_ops)
-CREATE INDEX IF NOT EXISTS kb_documents_embedding_idx
+-- Add columns to existing table (no-ops if already present)
+ALTER TABLE kb_documents
+  ADD COLUMN IF NOT EXISTS outdated        boolean     NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS outdated_reason text,
+  ADD COLUMN IF NOT EXISTS outdated_at     timestamptz,
+  ADD COLUMN IF NOT EXISTS duplicate_of   text        REFERENCES kb_documents(id) ON DELETE SET NULL;
+
+-- 3. Vector similarity index (HNSW — no training rows needed, works on empty table)
+DROP INDEX IF EXISTS kb_documents_embedding_idx;
+CREATE INDEX IF NOT EXISTS idx_kb_embedding_hnsw
   ON kb_documents
-  USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);
+  USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
 
 -- 4. Metadata indexes for filtering
 CREATE INDEX IF NOT EXISTS kb_documents_source_idx
@@ -32,6 +43,9 @@ CREATE INDEX IF NOT EXISTS kb_documents_metadata_idx
 
 CREATE INDEX IF NOT EXISTS kb_documents_issue_key_idx
   ON kb_documents ((metadata->>'jira_issue_key'));
+
+CREATE INDEX IF NOT EXISTS idx_kb_outdated ON kb_documents (outdated);
+CREATE INDEX IF NOT EXISTS idx_kb_sprint   ON kb_documents ((metadata->>'sprint'));
 
 -- 5. Auto-update updated_at on row change
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -47,25 +61,87 @@ CREATE OR REPLACE TRIGGER kb_documents_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
--- 6. Useful views
+-- 6. Duplicate log
+CREATE TABLE IF NOT EXISTS duplicate_log (
+  id               uuid          PRIMARY KEY DEFAULT gen_random_uuid(),
+  new_entry_id     text          REFERENCES kb_documents(id) ON DELETE CASCADE,
+  old_entry_id     text,
+  old_entry_title  text,
+  similarity       numeric(5,4)  NOT NULL,
+  action_taken     text          NOT NULL,   -- 'auto_deleted' | 'flagged'
+  jira_notified    boolean       NOT NULL DEFAULT false,
+  created_at       timestamptz   NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_duplog_new ON duplicate_log (new_entry_id);
+
+-- 7. find_duplicates function
+CREATE OR REPLACE FUNCTION find_duplicates(
+  p_embedding  vector(1024),
+  p_exclude_id text,
+  p_threshold  numeric DEFAULT 0.90
+)
+RETURNS TABLE (
+  id          text,
+  title       text,
+  feature     text,
+  sprint      text,
+  zephyr_key  text,
+  similarity  numeric
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    kd.id,
+    COALESCE(kd.metadata->>'title', kd.id)        AS title,
+    kd.metadata->>'feature_area'                   AS feature,
+    kd.metadata->>'sprint'                         AS sprint,
+    kd.metadata->>'zephyr_key'                     AS zephyr_key,
+    (1 - (kd.embedding <=> p_embedding))::numeric  AS similarity
+  FROM   kb_documents kd
+  WHERE  kd.id != p_exclude_id
+    AND  (kd.outdated IS NULL OR kd.outdated = false)
+    AND  (1 - (kd.embedding <=> p_embedding)) > p_threshold
+  ORDER  BY similarity DESC
+  LIMIT  10;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 8. Stale entries view
+CREATE OR REPLACE VIEW stale_entries AS
+SELECT
+  id,
+  COALESCE(metadata->>'title', id)  AS title,
+  metadata->>'feature_area'         AS feature,
+  metadata->>'sprint'               AS sprint,
+  metadata->>'zephyr_key'           AS zephyr_key,
+  updated_at,
+  NOW() - updated_at                AS age,
+  outdated,
+  outdated_reason
+FROM   kb_documents
+WHERE  updated_at < NOW() - INTERVAL '90 days'
+    OR outdated = true
+ORDER  BY updated_at ASC;
+
+-- 9. Unified KB stats view
 CREATE OR REPLACE VIEW kb_stats AS
 SELECT
-  source,
-  COUNT(*)                                    AS doc_count,
-  MAX(updated_at)                             AS last_updated,
-  pg_size_pretty(pg_total_relation_size('kb_documents')) AS table_size
-FROM kb_documents
-GROUP BY source
-ORDER BY doc_count DESC;
+  COUNT(*)                                                           AS total_entries,
+  COUNT(*) FILTER (WHERE outdated IS NULL OR outdated = false)       AS active_entries,
+  COUNT(*) FILTER (WHERE outdated = true)                            AS outdated_entries,
+  COUNT(*) FILTER (WHERE created_at >= date_trunc('month', NOW()))  AS added_this_month,
+  COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')   AS added_this_week,
+  COUNT(DISTINCT metadata->>'feature_area')                          AS unique_features,
+  COUNT(DISTINCT metadata->>'sprint')                                AS unique_sprints,
+  MIN(created_at)                                                    AS oldest_entry,
+  MAX(updated_at)                                                    AS last_updated
+FROM kb_documents;
 
 -- Done — verify with:
 -- SELECT * FROM kb_stats;
 -- SELECT COUNT(*) FROM kb_documents;
 
 -- ─── Approvals table (replaces approvals.json) ───────────────────────────────
--- Survives server restarts, redeployments, and horizontal scaling.
--- Only created when DATABASE_URL is configured (Phase 2 mode).
-
 CREATE TABLE IF NOT EXISTS approvals (
   id           TEXT PRIMARY KEY,
   data         JSONB NOT NULL,

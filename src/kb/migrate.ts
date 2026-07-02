@@ -108,6 +108,24 @@ async function migrate() {
   console.log(`  pgvector KB now has ${pgStats.total} documents`)
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n')
 
+  // Post-migration duplicate scan: flag near-duplicates for manual review.
+  // Does not auto-delete and does not post Jira comments (batch operation).
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+  console.log('  Post-migration duplicate scan')
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n')
+  console.log('  Scanning migrated entries for near-duplicates...')
+  console.log('  (flags for review only — no auto-deletion, no Jira comments)\n')
+
+  const scanResult = await pg.scanAndFlagDuplicates(0.90)
+  console.log(`  Scanned:  ${scanResult.scanned} entries`)
+  console.log(`  Flagged:  ${scanResult.flagged} probable duplicates`)
+  if (scanResult.flagged > 0) {
+    console.log('  Review:   npm run kb → View outdated / stale entries')
+  } else {
+    console.log('  ✓ No duplicates found')
+  }
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n')
+
   await pg.disconnect()
 }
 
