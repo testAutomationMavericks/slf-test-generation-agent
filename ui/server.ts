@@ -1570,10 +1570,43 @@ app.post('/api/kb/seed', async (_req, res) => {
 
   send('Clearing KB…');
   await db.clear();
-  const child = spawn('npx', ['tsx', 'src/local-kb/seed.ts'], { cwd: ROOT, env: process.env });
-  child.stdout.on('data', (d: Buffer) => send(d.toString().trim()));
-  child.stderr.on('data', (d: Buffer) => send(d.toString().trim()));
-  child.on('close', () => { send('Seed complete ✓', true); res.end(); });
+
+  // Always seed local KB first (hardcoded demo data lives in seed.ts)
+  const localKb = new LocalKnowledgeBase(path.join(ROOT, 'local-kb-data'));
+  await localKb.clear();
+  await new Promise<void>(resolve => {
+    const child = spawn('npx', ['tsx', 'src/local-kb/seed.ts'], { cwd: ROOT, env: process.env });
+    child.stdout.on('data', (d: Buffer) => send(d.toString().trim()));
+    child.stderr.on('data', (d: Buffer) => send(d.toString().trim()));
+    child.on('close', () => resolve());
+  });
+
+  // If backend is pgvector, migrate the freshly seeded local docs across
+  if (db instanceof PgKnowledgeBase) {
+    const apiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      send('⚠ Skipping PG migration — ANTHROPIC_API_KEY not set (needed for voyage-3 embeddings)');
+    } else {
+      send('Migrating seed data to EC2 / pgvector…');
+      const localDocs = await localKb.retrieve('', { topK: 99999, minScore: 0 });
+      let migrated = 0;
+      for (const doc of localDocs) {
+        const id = (doc.metadata as any).id ?? `seeded:${migrated}`;
+        const source = ((doc.metadata as any).source ?? 'generated') as 'jira' | 'zephyr' | 'confluence' | 'generated';
+        try {
+          await db.addDocument({ id, source, content: doc.content, metadata: doc.metadata as any });
+          migrated++;
+          send(`[${migrated}/${localDocs.length}] ✓ ${id}`);
+        } catch (e: any) {
+          send(`✗ ${id}: ${e.message}`);
+        }
+      }
+      send(`Migrated ${migrated}/${localDocs.length} documents to pgvector ✓`);
+    }
+  }
+
+  send('Seed complete ✓', true);
+  res.end();
 });
 
 app.delete('/api/kb/clear', async (_req, res) => {
