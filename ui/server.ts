@@ -28,32 +28,6 @@ import { formatTestCaseDocument, formatZephyrDocument } from '../src/knowledge-b
 import { createApprovalStore } from '../src/approvals/approval-store.js';
 import type { JiraIssue, ZephyrTestCase } from './client/src/types/api.js';
 
-// ─── Voyage-3 Embeddings ──────────────────────────────────────────────────────
-async function getEmbedding(text: string): Promise<number[]> {
-  const key = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
-  if (!key) return [];
-
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'voyage-3',
-        input: text.slice(0, 8000),
-        input_type: 'document',
-      }),
-    });
-    if (!res.ok) return [];
-    const data = await res.json() as { data: Array<{ embedding: number[] }> };
-    return data.data?.[0]?.embedding ?? [];
-  } catch {
-    return []; // fallback to deterministic
-  }
-}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -73,11 +47,12 @@ function createKB(): IKnowledgeBase {
   const dbUrl = buildDbUrl(config.databaseUrl || process.env.DATABASE_URL, config.dbName || process.env.DB_NAME);
   const apiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
   if (!dbUrl) {
-    console.warn('  ⚠ DATABASE_URL not configured — KB features unavailable until EC2 is set up');
-  } else if (!apiKey) {
-    console.warn('  ⚠ ANTHROPIC_API_KEY missing — KB embeddings will fail');
+    console.warn('  ⚠ DATABASE_URL not configured — KB features unavailable until EC2/Neon is set up');
   } else {
-    console.log('  KB backend: pgvector (EC2)');
+    console.log(apiKey
+      ? '  KB backend: pgvector + Voyage-3 embeddings'
+      : '  KB backend: pgvector + local deterministic embeddings (add Anthropic API key for better quality)'
+    );
   }
   return new PgKnowledgeBase(dbUrl || 'unconfigured', apiKey || '');
 }

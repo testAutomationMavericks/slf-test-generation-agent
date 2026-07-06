@@ -1,24 +1,71 @@
 /**
  * src/kb/pg-vector-db.ts
  *
- * Phase 2 Knowledge Base — PostgreSQL + pgvector + voyage-3 embeddings.
+ * Knowledge Base — PostgreSQL + pgvector.
+ * Embeddings: Voyage-3 (Anthropic API) when an API key is configured,
+ * otherwise a deterministic 1024-dim keyword embedding — same vector
+ * dimension so no schema change is needed when switching modes.
  *
  * Requires:
  *   - npm install postgres
- *   - ANTHROPIC_API_KEY env var (for voyage-3 embeddings)
  *   - DATABASE_URL env var (postgres connection string)
  *   - pgvector extension + kb_documents table (see src/kb/schema.sql)
- *
- * Implements IKnowledgeBase.
+ *   - ANTHROPIC_API_KEY (optional — improves retrieval quality via Voyage-3)
  */
 
 import { KBDocument } from '../knowledge-base/types.js'
 import { IKnowledgeBase, RetrieveResult, RetrieveOptions, KBStats } from './interface.js'
 import { logger } from '../logger.js'
 
-// ─── Voyage-3 embeddings via Anthropic SDK ────────────────────────────────────
+// ─── Deterministic 1024-dim embedding (no API key required) ──────────────────
+// Uses character n-grams + word hashing + domain keyword boosts.
+// Same quality as the old LocalKnowledgeBase approach, output padded to 1024 dims
+// so vectors are compatible with the pgvector(1024) schema.
 
-async function getEmbedding(text: string, apiKey: string): Promise<number[]> {
+function localEmbed(text: string): number[] {
+  const DIM = 1024
+  const vec = new Array<number>(DIM).fill(0)
+  const lower = text.toLowerCase()
+
+  // Character bigram hashing
+  for (let i = 0; i < lower.length - 1; i++) {
+    const h = lower.charCodeAt(i) * 31 + lower.charCodeAt(i + 1) * 17
+    vec[((h % DIM) + DIM) % DIM] += 0.5
+  }
+
+  // Word hashing
+  const words = lower.match(/\b\w+\b/g) ?? []
+  for (const word of words) {
+    let h = 5381
+    for (let i = 0; i < word.length; i++) h = (h * 33) ^ word.charCodeAt(i)
+    vec[((h % DIM) + DIM) % DIM] += 1
+  }
+
+  // Domain keyword boosts — cluster related test case content together
+  const boosts: Record<string, number[]> = {
+    login:          [0, 1, 2, 3],       authentication: [0, 1, 2, 4],
+    password:       [1, 2, 4, 5],       session:        [2, 3, 5, 6],
+    token:          [3, 4, 5, 7],       logout:         [0, 2, 6, 7],
+    basket:         [20, 21, 22, 23],   checkout:       [20, 21, 23, 24],
+    discount:       [21, 23, 24, 25],   quantity:       [22, 23, 25, 26],
+    'test case':    [50, 51, 52, 53],   acceptance:     [50, 51, 53, 54],
+    precondition:   [52, 53, 54, 56],   scenario:       [50, 52, 54, 57],
+    endpoint:       [80, 82, 83, 84],   api:            [81, 82, 84, 85],
+    security:       [84, 85, 86, 87],   regression:     [90, 91, 92, 93],
+    'edge case':    [94, 95, 96, 97],   negative:       [95, 96, 97, 98],
+  }
+  for (const [phrase, dims] of Object.entries(boosts)) {
+    if (lower.includes(phrase)) dims.forEach(d => { vec[d] += 8 })
+  }
+
+  // L2 normalise
+  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1
+  return vec.map(v => v / mag)
+}
+
+// ─── Voyage-3 embeddings (Anthropic API — better quality when key is set) ─────
+
+async function voyage3Embed(text: string, apiKey: string, inputType: 'document' | 'query'): Promise<number[]> {
   const res = await fetch('https://api.anthropic.com/v1/embeddings', {
     method: 'POST',
     headers: {
@@ -28,38 +75,25 @@ async function getEmbedding(text: string, apiKey: string): Promise<number[]> {
     },
     body: JSON.stringify({
       model: 'voyage-3',
-      input: text.slice(0, 8000),
-      input_type: 'document',
+      input: text.slice(0, inputType === 'document' ? 8000 : 4000),
+      input_type: inputType,
     }),
   })
-
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Voyage-3 embedding failed: ${err}`)
-  }
-
+  if (!res.ok) throw new Error(`Voyage-3 embedding failed: ${await res.text()}`)
   const data = await res.json() as { data: Array<{ embedding: number[] }> }
   return data.data[0].embedding
 }
 
-async function getQueryEmbedding(text: string, apiKey: string): Promise<number[]> {
-  const res = await fetch('https://api.anthropic.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'voyage-3',
-      input: text.slice(0, 4000),
-      input_type: 'query',
-    }),
-  })
+async function getEmbedding(text: string, apiKey: string): Promise<number[]> {
+  if (!apiKey) return localEmbed(text)
+  try { return await voyage3Embed(text, apiKey, 'document') }
+  catch (e) { logger.warn('Voyage-3 failed, falling back to local embed:', e); return localEmbed(text) }
+}
 
-  if (!res.ok) throw new Error(`Voyage-3 query embedding failed`)
-  const data = await res.json() as { data: Array<{ embedding: number[] }> }
-  return data.data[0].embedding
+async function getQueryEmbedding(text: string, apiKey: string): Promise<number[]> {
+  if (!apiKey) return localEmbed(text)
+  try { return await voyage3Embed(text, apiKey, 'query') }
+  catch (e) { logger.warn('Voyage-3 failed, falling back to local embed:', e); return localEmbed(text) }
 }
 
 // ─── PgKnowledgeBase ──────────────────────────────────────────────────────────

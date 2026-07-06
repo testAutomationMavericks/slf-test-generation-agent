@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS kb_documents (
   id              TEXT PRIMARY KEY,
   source          TEXT NOT NULL CHECK (source IN ('jira', 'zephyr', 'confluence', 'generated')),
   content         TEXT NOT NULL,
-  embedding       vector(1024),          -- voyage-3 produces 1024-dimension vectors
+  embedding       vector(1024),          -- voyage-3 (with API key) or deterministic local embed
   metadata        JSONB DEFAULT '{}',
   outdated        boolean     NOT NULL DEFAULT false,
   outdated_reason text,
