@@ -15,7 +15,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from '../logger.js';
 import { KBDocument } from '../knowledge-base/types.js';
-import type { IKnowledgeBase } from '../kb/interface.js';
+import type { IKnowledgeBase, RetrieveOptions } from '../kb/interface.js';
 
 // ─── Vector Dimension ─────────────────────────────────────────────────────────
 
@@ -183,11 +183,7 @@ export class LocalKnowledgeBase {
    */
   async retrieve(
     query: string,
-    options: {
-      topK?: number;
-      minScore?: number;
-      filter?: Partial<Record<string, string>>;
-    } = {}
+    options: RetrieveOptions = {}
   ): Promise<Array<{ content: string; score: number; metadata: Record<string, string> }>> {
     const index = this.load();
     const topK = options.topK ?? 8;
@@ -202,6 +198,10 @@ export class LocalKnowledgeBase {
       }))
       .filter((r) => {
         if (r.score < minScore) return false;
+        // projectKeys multi-filter (local KB: match any in the list)
+        if (options.projectKeys?.length) {
+          return options.projectKeys.includes(r.metadata['project_key'] ?? '');
+        }
         if (!options.filter) return true;
         return Object.entries(options.filter).every(
           ([k, v]) => !v || r.metadata[k] === v

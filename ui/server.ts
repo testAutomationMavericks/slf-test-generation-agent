@@ -1642,8 +1642,9 @@ app.post('/api/kb/import/zephyr', async (_req, res) => {
   const projectKey = config.jiraProjectKey;
   if (!projectKey) { res.status(400).json({ error: 'No Jira project key configured' }); return; }
   if (!config.zephyrApiToken) { res.status(400).json({ error: 'Zephyr API token not configured' }); return; }
-  if (!config.anthropicApiKey && !process.env.ANTHROPIC_API_KEY) {
-    res.status(400).json({ error: 'ANTHROPIC_API_KEY required to generate embeddings' }); return;
+  // PgKnowledgeBase uses Voyage-3 embeddings via Anthropic API; local KB uses TF-IDF (no key needed)
+  if (db instanceof PgKnowledgeBase && !config.anthropicApiKey && !process.env.ANTHROPIC_API_KEY) {
+    res.status(400).json({ error: 'ANTHROPIC_API_KEY required to generate embeddings for pgvector backend' }); return;
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -1654,6 +1655,15 @@ app.post('/api/kb/import/zephyr', async (_req, res) => {
     res.write(`data: ${JSON.stringify({ message, done })}\n\n`);
 
   try {
+    // Verify the KB backend can actually accept writes before doing any work
+    if (db instanceof PgKnowledgeBase) {
+      const healthy: boolean = await (db as any).isHealthy().catch(() => false);
+      if (!healthy) {
+        send('✗ Knowledge base (PostgreSQL) is not reachable — imports cannot be saved. Check EC2 connectivity and DATABASE_URL.', true);
+        res.end(); return;
+      }
+    }
+
     send(`Fetching all Zephyr test cases for project ${projectKey}…`);
     const testCases = await directZephyrAllTestCases(projectKey);
     send(`Found ${testCases.length} test case(s) in Zephyr`);
