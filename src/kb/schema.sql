@@ -146,7 +146,7 @@ FROM kb_documents;
 -- SELECT * FROM kb_stats;
 -- SELECT COUNT(*) FROM kb_documents;
 
--- ─── Approvals table (replaces approvals.json) ───────────────────────────────
+-- ─── Approvals table ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS approvals (
   id           TEXT PRIMARY KEY,
   data         JSONB NOT NULL,

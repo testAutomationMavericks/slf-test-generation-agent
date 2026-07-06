@@ -1,16 +1,12 @@
 /**
  * src/approvals/approval-store.ts
  *
- * Approval storage abstraction.
- * - LocalApprovalStore  → approvals.json  (Phase 1, default)
- * - PgApprovalStore     → PostgreSQL table (Phase 2, when DATABASE_URL set)
- *
- * Both implement IApprovalStore — server.ts uses the interface only.
- * Switch is automatic: if DATABASE_URL is configured, Postgres is used.
+ * Approval storage — PostgreSQL (EC2) required.
+ * Table is auto-created on first connect (CREATE TABLE IF NOT EXISTS).
+ * When the DB is not yet reachable, operations log a warning and are no-ops
+ * (loadAll/load return empty; save/delete are skipped) rather than crashing.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
 import { logger } from '../logger.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -50,75 +46,24 @@ export interface IApprovalStore {
   loadAll(): Promise<ApprovalRequest[]>;
   save(approval: ApprovalRequest): Promise<void>;
   delete(id: string): Promise<void>;
-  backend: 'local' | 'postgres';
+  backend: 'postgres';
 }
 
-// ─── Local JSON store (Phase 1 default) ──────────────────────────────────────
-
-export class LocalApprovalStore implements IApprovalStore {
-  readonly backend = 'local' as const;
-  private filePath: string;
-  private cache: Record<string, ApprovalRequest> | null = null;
-
-  constructor(filePath: string) {
-    this.filePath = filePath;
-  }
-
-  private read(): Record<string, ApprovalRequest> {
-    if (this.cache) return this.cache;
-    if (fs.existsSync(this.filePath)) {
-      try {
-        this.cache = JSON.parse(fs.readFileSync(this.filePath, 'utf-8'));
-        return this.cache!;
-      } catch { /* fall through */ }
-    }
-    this.cache = {};
-    return this.cache;
-  }
-
-  private write(data: Record<string, ApprovalRequest>) {
-    this.cache = data;
-    fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2));
-  }
-
-  async load(id: string): Promise<ApprovalRequest | null> {
-    return this.read()[id] ?? null;
-  }
-
-  async loadAll(): Promise<ApprovalRequest[]> {
-    return Object.values(this.read()).sort(
-      (a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime()
-    );
-  }
-
-  async save(approval: ApprovalRequest): Promise<void> {
-    const data = this.read();
-    data[approval.id] = approval;
-    this.write(data);
-  }
-
-  async delete(id: string): Promise<void> {
-    const data = this.read();
-    delete data[id];
-    this.write(data);
-  }
-}
-
-// ─── PostgreSQL store (Phase 2) ───────────────────────────────────────────────
-// Falls back to LocalApprovalStore automatically when postgres is unreachable,
-// so approvals are never silently lost while EC2 is not yet available.
+// ─── PostgreSQL store ─────────────────────────────────────────────────────────
 
 export class PgApprovalStore implements IApprovalStore {
   readonly backend = 'postgres' as const;
   private sql: any = null;
-  private fallback: LocalApprovalStore;
 
-  constructor(private connectionUrl: string, fallbackPath: string) {
-    this.fallback = new LocalApprovalStore(fallbackPath);
+  constructor(private connectionUrl: string) {
     this.connect();
   }
 
   private async connect() {
+    if (!this.connectionUrl || this.connectionUrl === 'unconfigured') {
+      logger.warn('PgApprovalStore: DATABASE_URL not configured — approval features unavailable');
+      return;
+    }
     try {
       const { default: postgres } = await import('postgres');
       this.sql = postgres(this.connectionUrl, {
@@ -128,7 +73,6 @@ export class PgApprovalStore implements IApprovalStore {
         connect_timeout: 10,
         onnotice: () => {},
       });
-      // Ensure table exists
       await this.sql`
         CREATE TABLE IF NOT EXISTS approvals (
           id         TEXT PRIMARY KEY,
@@ -143,7 +87,7 @@ export class PgApprovalStore implements IApprovalStore {
       `;
       logger.info('PgApprovalStore: connected to PostgreSQL');
     } catch (e) {
-      logger.warn('PgApprovalStore: EC2 not reachable, using local approvals.json until reconnected —', e);
+      logger.warn('PgApprovalStore: EC2 not reachable —', e);
       this.sql = null;
     }
   }
@@ -153,22 +97,19 @@ export class PgApprovalStore implements IApprovalStore {
   }
 
   async load(id: string): Promise<ApprovalRequest | null> {
-    if (!this.connected) { return this.fallback.load(id); }
+    if (!this.connected) { logger.warn('PgApprovalStore: not connected, cannot load approval'); return null; }
     const rows = await this.sql`SELECT data FROM approvals WHERE id = ${id}`;
     return rows[0]?.data ?? null;
   }
 
   async loadAll(): Promise<ApprovalRequest[]> {
-    if (!this.connected) { return this.fallback.loadAll(); }
+    if (!this.connected) { logger.warn('PgApprovalStore: not connected, returning empty list'); return []; }
     const rows = await this.sql`SELECT data FROM approvals ORDER BY created_at DESC`;
     return rows.map((r: any) => r.data as ApprovalRequest);
   }
 
   async save(approval: ApprovalRequest): Promise<void> {
-    if (!this.connected) {
-      logger.warn(`PgApprovalStore: EC2 not reachable — saving "${approval.id}" to local approvals.json`);
-      return this.fallback.save(approval);
-    }
+    if (!this.connected) { logger.warn(`PgApprovalStore: not connected, cannot save "${approval.id}"`); return; }
     await this.sql`
       INSERT INTO approvals (id, data, status)
       VALUES (${approval.id}, ${JSON.stringify(approval)}::jsonb, ${approval.status})
@@ -181,7 +122,7 @@ export class PgApprovalStore implements IApprovalStore {
   }
 
   async delete(id: string): Promise<void> {
-    if (!this.connected) { return this.fallback.delete(id); }
+    if (!this.connected) { logger.warn(`PgApprovalStore: not connected, cannot delete "${id}"`); return; }
     await this.sql`DELETE FROM approvals WHERE id = ${id}`;
     logger.info(`PgApprovalStore: deleted approval ${id}`);
   }
@@ -193,14 +134,11 @@ export class PgApprovalStore implements IApprovalStore {
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
-export function createApprovalStore(opts: {
-  filePath: string;
-  databaseUrl?: string;
-}): IApprovalStore {
-  if (opts.databaseUrl) {
-    logger.info('Approval store: PostgreSQL (EC2) with local fallback');
-    return new PgApprovalStore(opts.databaseUrl, opts.filePath);
+export function createApprovalStore(connectionUrl?: string): IApprovalStore {
+  if (!connectionUrl) {
+    logger.warn('Approval store: DATABASE_URL not configured — approval features unavailable until EC2 is set up');
+  } else {
+    logger.info('Approval store: PostgreSQL (EC2)');
   }
-  logger.info('Approval store: local JSON');
-  return new LocalApprovalStore(opts.filePath);
+  return new PgApprovalStore(connectionUrl ?? 'unconfigured');
 }

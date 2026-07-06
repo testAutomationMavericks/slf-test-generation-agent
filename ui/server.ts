@@ -193,10 +193,9 @@ let config = loadConfig();
 
 // Now config is loaded — safe to create KB and approval store
 db = createKB();
-approvalStore = createApprovalStore({
-  filePath: path.join(ROOT, 'approvals.json'),
-  databaseUrl: buildDbUrl(config.databaseUrl || process.env.DATABASE_URL, config.dbName || process.env.DB_NAME) || undefined,
-});
+approvalStore = createApprovalStore(
+  buildDbUrl(config.databaseUrl || process.env.DATABASE_URL, config.dbName || process.env.DB_NAME) || undefined
+);
 
 // ─── WebSocket broadcast ──────────────────────────────────────────────────────
 
@@ -633,10 +632,7 @@ app.post('/api/config', async (req, res) => {
     if ('disconnect' in approvalStore && typeof (approvalStore as any).disconnect === 'function') {
       await (approvalStore as any).disconnect().catch(() => {});
     }
-    approvalStore = createApprovalStore({
-      filePath: path.join(ROOT, 'approvals.json'),
-      databaseUrl: newDbUrl || undefined,
-    });
+    approvalStore = createApprovalStore(newDbUrl || undefined);
     console.log(`  Approval store: ${approvalStore.backend}`);
   }
 
