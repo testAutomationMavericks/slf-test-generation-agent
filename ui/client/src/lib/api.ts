@@ -45,7 +45,6 @@ export const api = {
   kbSave: (content: string, issueKey: string, approvedBy: string) =>
     req<{ ok: boolean; stats: KBStats }>('POST', '/api/kb/save', { content, issueKey, approvedBy }),
   kbClear: () => req<{ ok: boolean }>('DELETE', '/api/kb/clear'),
-  kbSeedStream: (): EventSource => new EventSource('/api/kb/seed'),
 
   // Approvals
   approvals: () => req<ApprovalRequest[]>('GET', '/api/approvals'),

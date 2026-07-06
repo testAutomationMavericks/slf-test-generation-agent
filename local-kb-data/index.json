@@ -271,7 +271,7 @@
         "component": "auth-service",
         "approved_by": "",
         "project_key": "DEMO",
-        "ingested_at": "2026-06-03T09:21:58.552Z",
+        "ingested_at": "2026-07-06T10:45:36.198Z",
         "doc_type": "acceptance_criteria"
       }
     },
@@ -545,7 +545,7 @@
         "component": "basket-service",
         "approved_by": "",
         "project_key": "DEMO",
-        "ingested_at": "2026-06-03T09:21:58.552Z",
+        "ingested_at": "2026-07-06T10:45:36.198Z",
         "doc_type": "acceptance_criteria"
       }
     },
@@ -819,7 +819,7 @@
         "component": "checkout-service",
         "approved_by": "",
         "project_key": "DEMO",
-        "ingested_at": "2026-06-03T09:21:58.552Z",
+        "ingested_at": "2026-07-06T10:45:36.198Z",
         "doc_type": "acceptance_criteria"
       }
     },
@@ -1093,7 +1093,7 @@
         "component": "auth-service",
         "approved_by": "",
         "project_key": "DEMO",
-        "ingested_at": "2026-06-03T09:21:58.552Z",
+        "ingested_at": "2026-07-06T10:45:36.198Z",
         "doc_type": "acceptance_criteria"
       }
     },
@@ -1367,7 +1367,7 @@
         "component": "",
         "approved_by": "",
         "project_key": "",
-        "ingested_at": "2026-06-03T09:21:58.556Z",
+        "ingested_at": "2026-07-06T10:45:36.202Z",
         "doc_type": "architecture"
       }
     },
@@ -1641,7 +1641,7 @@
         "component": "",
         "approved_by": "",
         "project_key": "",
-        "ingested_at": "2026-06-03T09:21:58.556Z",
+        "ingested_at": "2026-07-06T10:45:36.202Z",
         "doc_type": "architecture"
       }
     },
@@ -1915,7 +1915,7 @@
         "component": "",
         "approved_by": "",
         "project_key": "DEMO",
-        "ingested_at": "2026-06-03T09:21:58.557Z",
+        "ingested_at": "2026-07-06T10:45:36.203Z",
         "doc_type": "test_case"
       }
     },
@@ -2189,7 +2189,7 @@
         "component": "",
         "approved_by": "",
         "project_key": "DEMO",
-        "ingested_at": "2026-06-03T09:21:58.557Z",
+        "ingested_at": "2026-07-06T10:45:36.203Z",
         "doc_type": "test_case"
       }
     },
@@ -2463,7 +2463,7 @@
         "component": "",
         "approved_by": "",
         "project_key": "DEMO",
-        "ingested_at": "2026-06-03T09:21:58.557Z",
+        "ingested_at": "2026-07-06T10:45:36.203Z",
         "doc_type": "test_case"
       }
     },
@@ -2737,7 +2737,7 @@
         "component": "",
         "approved_by": "",
         "project_key": "DEMO",
-        "ingested_at": "2026-06-03T09:21:58.557Z",
+        "ingested_at": "2026-07-06T10:45:36.203Z",
         "doc_type": "test_case"
       }
     },
@@ -3011,12 +3011,12 @@
         "component": "",
         "approved_by": "",
         "project_key": "DEMO",
-        "ingested_at": "2026-06-03T09:21:58.557Z",
+        "ingested_at": "2026-07-06T10:45:36.203Z",
         "doc_type": "test_case"
       }
     },
     {
-      "id": "generated:DEMO-1:2026-06-03T09:21:58.559Z",
+      "id": "generated:DEMO-1:2026-07-06T10:45:36.207Z",
       "vector": [
         0.23069543949059473,
         0.37996895916097956,
@@ -3277,7 +3277,7 @@
       ],
       "content": "## Test Case: DEMO-T6 — Login with SQL injection in email field\n\n**Type:** Security  **Priority:** Critical\n\n### Preconditions\n- Login page accessible\n\n### Test Steps\n| Step | Action | Expected Result |\n|---|---|---|\n| 1 | Enter `' OR 1=1 --` in email field | Field accepts input |\n| 2 | Enter any value in password | Field populated |\n| 3 | Submit form | Returns \"Invalid email or password\"; no DB error exposed |\n\n### Expected Outcome\nAuthentication fails gracefully. No SQL error in response. Injection has no effect.",
       "metadata": {
-        "id": "generated:DEMO-1:2026-06-03T09:21:58.559Z",
+        "id": "generated:DEMO-1:2026-07-06T10:45:36.207Z",
         "source": "generated",
         "jira_issue_key": "DEMO-1",
         "jira_epic": "",
@@ -3285,13 +3285,13 @@
         "component": "auth-service",
         "approved_by": "alice.smith",
         "project_key": "DEMO",
-        "ingested_at": "2026-06-03T09:21:58.559Z",
+        "ingested_at": "2026-07-06T10:45:36.207Z",
         "doc_type": "test_case"
       }
     }
   ],
   "stats": {
     "total": 12,
-    "lastUpdated": "2026-06-03T09:21:58.559Z"
+    "lastUpdated": "2026-07-06T10:45:36.207Z"
   }
 }

@@ -9,7 +9,6 @@
     "demo": "tsx demo/run-demo.ts",
     "demo:interactive": "tsx demo/run-demo.ts --interactive",
     "demo:ticket": "tsx demo/run-demo.ts --ticket",
-    "kb:local:seed": "tsx src/local-kb/seed.ts",
     "build": "tsc",
     "type-check": "tsc --noEmit",
     "test:unit": "npx tsx --test tests/unit/*.test.ts",

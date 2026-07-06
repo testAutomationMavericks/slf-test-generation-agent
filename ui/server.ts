@@ -1493,7 +1493,7 @@ app.post('/api/generate', async (req, res) => {
         send({ type: 'kb_context', count: docCount, message: `KB: ${docCount} relevant docs found` });
         console.log(`  KB context: ${docCount} docs for ${issueKey}`);
       } else {
-        console.log(`  KB context: none found for ${issueKey} (run kb:local:seed to populate)`);
+        console.log(`  KB context: none found for ${issueKey} — use "Import from Zephyr" on the KB page to populate`);
       }
     } catch (e) {
       console.log(`  KB context: skipped (${e})`);
@@ -1588,52 +1588,6 @@ app.post('/api/kb/save', async (req, res) => {
   } catch (err) { res.status(500).json({ error: String(err) }); }
 });
 
-app.post('/api/kb/seed', async (_req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  const send = (msg: string, done = false) =>
-    res.write(`data: ${JSON.stringify({ message: msg, done })}\n\n`);
-
-  send('Clearing KB…');
-  await db.clear();
-
-  // Always seed local KB first (hardcoded demo data lives in seed.ts)
-  const localKb = new LocalKnowledgeBase(path.join(ROOT, 'local-kb-data'));
-  await localKb.clear();
-  await new Promise<void>(resolve => {
-    const child = spawn('npx', ['tsx', 'src/local-kb/seed.ts'], { cwd: ROOT, env: process.env });
-    child.stdout.on('data', (d: Buffer) => send(d.toString().trim()));
-    child.stderr.on('data', (d: Buffer) => send(d.toString().trim()));
-    child.on('close', () => resolve());
-  });
-
-  // If backend is pgvector, migrate the freshly seeded local docs across
-  if (db instanceof PgKnowledgeBase) {
-    const apiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      send('⚠ Skipping PG migration — ANTHROPIC_API_KEY not set (needed for voyage-3 embeddings)');
-    } else {
-      send('Migrating seed data to EC2 / pgvector…');
-      const localDocs = await localKb.retrieve('', { topK: 99999, minScore: 0 });
-      let migrated = 0;
-      for (const doc of localDocs) {
-        const id = (doc.metadata as any).id ?? `seeded:${migrated}`;
-        const source = ((doc.metadata as any).source ?? 'generated') as 'jira' | 'zephyr' | 'confluence' | 'generated';
-        try {
-          await db.addDocument({ id, source, content: doc.content, metadata: doc.metadata as any });
-          migrated++;
-          send(`[${migrated}/${localDocs.length}] ✓ ${id}`);
-        } catch (e: any) {
-          send(`✗ ${id}: ${e.message}`);
-        }
-      }
-      send(`Migrated ${migrated}/${localDocs.length} documents to pgvector ✓`);
-    }
-  }
-
-  send('Seed complete ✓', true);
-  res.end();
-});
 
 // ─── Zephyr → KB bulk import ─────────────────────────────────────────────────
 // Streams SSE progress. Idempotent: existing zephyr:KEY entries are skipped.
