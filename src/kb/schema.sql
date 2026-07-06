@@ -44,8 +44,9 @@ CREATE INDEX IF NOT EXISTS kb_documents_metadata_idx
 CREATE INDEX IF NOT EXISTS kb_documents_issue_key_idx
   ON kb_documents ((metadata->>'jira_issue_key'));
 
-CREATE INDEX IF NOT EXISTS idx_kb_outdated ON kb_documents (outdated);
-CREATE INDEX IF NOT EXISTS idx_kb_sprint   ON kb_documents ((metadata->>'sprint'));
+CREATE INDEX IF NOT EXISTS idx_kb_outdated     ON kb_documents (outdated);
+CREATE INDEX IF NOT EXISTS idx_kb_sprint       ON kb_documents ((metadata->>'sprint'));
+CREATE INDEX IF NOT EXISTS idx_kb_project_key  ON kb_documents ((metadata->>'project_key'));
 
 -- 5. Auto-update updated_at on row change
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -75,10 +76,13 @@ CREATE TABLE IF NOT EXISTS duplicate_log (
 CREATE INDEX IF NOT EXISTS idx_duplog_new ON duplicate_log (new_entry_id);
 
 -- 7. find_duplicates function
+--    p_project_key: when provided, only compares within the same project.
+--                   Pass NULL to search across all projects.
 CREATE OR REPLACE FUNCTION find_duplicates(
-  p_embedding  vector(1024),
-  p_exclude_id text,
-  p_threshold  numeric DEFAULT 0.90
+  p_embedding   vector(1024),
+  p_exclude_id  text,
+  p_threshold   numeric DEFAULT 0.90,
+  p_project_key text    DEFAULT NULL
 )
 RETURNS TABLE (
   id          text,
@@ -101,6 +105,7 @@ BEGIN
   WHERE  kd.id != p_exclude_id
     AND  (kd.outdated IS NULL OR kd.outdated = false)
     AND  (1 - (kd.embedding <=> p_embedding)) > p_threshold
+    AND  (p_project_key IS NULL OR kd.metadata->>'project_key' = p_project_key)
   ORDER  BY similarity DESC
   LIMIT  10;
 END;

@@ -307,6 +307,7 @@ export async function retrieveLocalContextForIssue(
     db.retrieve(`acceptance criteria and tests for ${featureArea ?? projectKey}`, {
       topK: 6,
       minScore: 0.35,
+      filter: { project_key: projectKey },
     }).catch(() => []),
   ]);
 

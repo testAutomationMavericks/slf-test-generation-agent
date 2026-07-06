@@ -119,12 +119,13 @@ export class PgKnowledgeBase implements IKnowledgeBase {
         updated_at = NOW()
     `
     logger.info(`PgKB: upserted "${doc.id}" (${doc.source})`)
-    await this.runDuplicateCheck(doc.id, embedding)
+    await this.runDuplicateCheck(doc.id, embedding, doc.metadata?.project_key || undefined)
   }
 
   // Runs after every EC2 write. Flags near-duplicates; auto-deletes near-identical ones.
   // Non-fatal — a dedup failure never blocks the write.
-  private async runDuplicateCheck(docId: string, embedding: number[]): Promise<void> {
+  // projectKey scopes the check to the same project; pass undefined for global.
+  private async runDuplicateCheck(docId: string, embedding: number[], projectKey?: string): Promise<void> {
     const autoDelete = parseFloat(process.env.KB_AUTO_DELETE_THRESHOLD || '0.97')
     const flag       = parseFloat(process.env.KB_FLAG_THRESHOLD        || '0.90')
 
@@ -133,7 +134,8 @@ export class PgKnowledgeBase implements IKnowledgeBase {
         SELECT * FROM find_duplicates(
           ${JSON.stringify(embedding)}::vector,
           ${docId}::text,
-          ${flag}
+          ${flag},
+          ${projectKey ?? null}
         )
       ` as Array<{ id: string; title: string; similarity: string }>
 
@@ -185,50 +187,24 @@ export class PgKnowledgeBase implements IKnowledgeBase {
     if (!this.connected) { logger.warn('PgKB: not connected, returning empty results'); return []; }
     const { topK = 8, minScore = 0.3, filter } = options
     const queryVec = await getQueryEmbedding(query, this.apiKey)
+    const vec = JSON.stringify(queryVec)
 
-    // Build dynamic WHERE clauses
-    let rows: any[]
-    if (filter?.source && filter?.jira_issue_key) {
-      rows = await this.sql`
-        SELECT id, content, metadata,
-               1 - (embedding <=> ${JSON.stringify(queryVec)}::vector) AS score
-        FROM kb_documents
-        WHERE source = ${filter.source}
-          AND metadata->>'jira_issue_key' = ${filter.jira_issue_key}
-          AND (outdated IS NULL OR outdated = false)
-        ORDER BY embedding <=> ${JSON.stringify(queryVec)}::vector
-        LIMIT ${topK}
-      `
-    } else if (filter?.source) {
-      rows = await this.sql`
-        SELECT id, content, metadata,
-               1 - (embedding <=> ${JSON.stringify(queryVec)}::vector) AS score
-        FROM kb_documents
-        WHERE source = ${filter.source}
-          AND (outdated IS NULL OR outdated = false)
-        ORDER BY embedding <=> ${JSON.stringify(queryVec)}::vector
-        LIMIT ${topK}
-      `
-    } else if (filter?.jira_issue_key) {
-      rows = await this.sql`
-        SELECT id, content, metadata,
-               1 - (embedding <=> ${JSON.stringify(queryVec)}::vector) AS score
-        FROM kb_documents
-        WHERE metadata->>'jira_issue_key' = ${filter.jira_issue_key}
-          AND (outdated IS NULL OR outdated = false)
-        ORDER BY embedding <=> ${JSON.stringify(queryVec)}::vector
-        LIMIT ${topK}
-      `
-    } else {
-      rows = await this.sql`
-        SELECT id, content, metadata,
-               1 - (embedding <=> ${JSON.stringify(queryVec)}::vector) AS score
-        FROM kb_documents
-        WHERE (outdated IS NULL OR outdated = false)
-        ORDER BY embedding <=> ${JSON.stringify(queryVec)}::vector
-        LIMIT ${topK}
-      `
-    }
+    // Build WHERE fragments — each is empty sql when the filter isn't set
+    const sourceF      = filter?.source          ? this.sql`AND source = ${filter.source}` : this.sql``
+    const issueF       = filter?.jira_issue_key  ? this.sql`AND metadata->>'jira_issue_key' = ${filter.jira_issue_key}` : this.sql``
+    const projectF     = filter?.project_key     ? this.sql`AND metadata->>'project_key' = ${filter.project_key}` : this.sql``
+
+    const rows: any[] = await this.sql`
+      SELECT id, content, metadata,
+             1 - (embedding <=> ${vec}::vector) AS score
+      FROM   kb_documents
+      WHERE  (outdated IS NULL OR outdated = false)
+        ${sourceF}
+        ${issueF}
+        ${projectF}
+      ORDER  BY embedding <=> ${vec}::vector
+      LIMIT  ${topK}
+    `
 
     return rows
       .filter(r => Number(r.score) >= minScore)
@@ -289,8 +265,9 @@ export class PgKnowledgeBase implements IKnowledgeBase {
   async scanAndFlagDuplicates(threshold = 0.90): Promise<{ scanned: number; flagged: number }> {
     if (!this.connected || !this.sql) return { scanned: 0, flagged: 0 }
 
-    const entries = await this.sql<Array<{ id: string }>>`
-      SELECT id FROM kb_documents
+    const entries = await this.sql<Array<{ id: string; project_key: string | null }>>`
+      SELECT id, metadata->>'project_key' AS project_key
+      FROM kb_documents
       WHERE (outdated IS NULL OR outdated = false) AND embedding IS NOT NULL
     `
 
@@ -302,7 +279,8 @@ export class PgKnowledgeBase implements IKnowledgeBase {
         FROM find_duplicates(
           (SELECT embedding FROM kb_documents WHERE id = ${entry.id}),
           ${entry.id}::text,
-          ${threshold}
+          ${threshold},
+          ${entry.project_key ?? null}
         )
       `
 

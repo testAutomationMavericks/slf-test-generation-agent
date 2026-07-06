@@ -43,22 +43,27 @@ if (action === 'stats') {
 
 // ── Search ─────────────────────────────────────────────────────────────────
 if (action === 'search') {
-  const query = await input({ message: 'Search term (title / feature / zephyr key):' })
-  const res   = await db.query(`
+  const query      = await input({ message: 'Search term (title / feature / zephyr key):' })
+  const projectRaw = await input({ message: 'Filter by project key (leave blank for all):' })
+  const project    = projectRaw.trim().toUpperCase() || null
+
+  const res = await db.query(`
     SELECT id,
            metadata->>'title'        AS title,
            metadata->>'feature_area' AS feature,
            metadata->>'sprint'       AS sprint,
            metadata->>'zephyr_key'   AS zephyr_key,
+           metadata->>'project_key'  AS project_key,
            outdated,
            created_at
     FROM   kb_documents
-    WHERE  metadata->>'title'        ILIKE $1
-        OR metadata->>'feature_area' ILIKE $1
-        OR metadata->>'zephyr_key'   ILIKE $1
+    WHERE  (metadata->>'title'        ILIKE $1
+         OR metadata->>'feature_area' ILIKE $1
+         OR metadata->>'zephyr_key'   ILIKE $1)
+      AND  ($2::text IS NULL OR metadata->>'project_key' = $2)
     ORDER  BY created_at DESC
     LIMIT  20
-  `, [`%${query}%`])
+  `, [`%${query}%`, project])
 
   if (res.rows.length === 0) {
     console.log('\n  No matches found.')
@@ -66,7 +71,7 @@ if (action === 'search') {
     console.log(`\n  ${res.rows.length} result(s):\n`)
     res.rows.forEach(r => {
       const flag = r.outdated ? '  ⚠️  OUTDATED' : ''
-      console.log(`  [${r.feature}] ${r.title}`)
+      console.log(`  [${r.project_key || '?'}] [${r.feature}] ${r.title}`)
       console.log(`    Sprint: ${r.sprint || 'N/A'}  |  Zephyr: ${r.zephyr_key || 'N/A'}  |  Created: ${r.created_at.toDateString()}${flag}\n`)
     })
   }
@@ -218,20 +223,27 @@ if (action === 'purge') {
 
 // ── Full KB duplicate scan ─────────────────────────────────────────────────
 if (action === 'scan') {
+  const projectRaw = await input({ message: 'Limit scan to project key (leave blank for all):' })
+  const project    = projectRaw.trim().toUpperCase() || null
+
   const ok = await confirm({
-    message: 'Scan entire KB for duplicates? This may take a few minutes.',
+    message: project
+      ? `Scan project ${project} for duplicates?`
+      : 'Scan entire KB for duplicates? This may take a few minutes.',
     default: true
   })
   if (!ok) { await db.end(); process.exit(0) }
 
   const all = await db.query(`
     SELECT id,
-           metadata->>'title'  AS title,
-           metadata->>'sprint' AS sprint
+           metadata->>'title'       AS title,
+           metadata->>'sprint'      AS sprint,
+           metadata->>'project_key' AS project_key
     FROM   kb_documents
     WHERE  (outdated IS NULL OR outdated = false)
       AND  embedding IS NOT NULL
-  `)
+      AND  ($1::text IS NULL OR metadata->>'project_key' = $1)
+  `, [project])
   console.log(`\n  Scanning ${all.rows.length} active entries...\n`)
 
   let duplicatesFound = 0
@@ -241,13 +253,14 @@ if (action === 'scan') {
       `SELECT * FROM find_duplicates(
          (SELECT embedding FROM kb_documents WHERE id = $1),
          $1::text,
-         0.90
+         0.90,
+         $2::text
        )`,
-      [entry.id]
+      [entry.id, entry.project_key || null]
     )
     if (dupes.rows.length > 0) {
       duplicatesFound++
-      console.log(`  ⚠️  "${entry.title}" (${entry.sprint || 'no sprint'})`)
+      console.log(`  ⚠️  [${entry.project_key || '?'}] "${entry.title}" (${entry.sprint || 'no sprint'})`)
       dupes.rows.forEach(d =>
         console.log(`       → similar to: "${d.title}" — ${(parseFloat(d.similarity) * 100).toFixed(1)}%`)
       )
@@ -255,7 +268,7 @@ if (action === 'scan') {
   }
 
   if (duplicatesFound === 0) {
-    console.log('  ✓ No duplicates found across the KB.\n')
+    console.log('  ✓ No duplicates found.\n')
   } else {
     console.log(`\n  Found ${duplicatesFound} entries with potential duplicates.`)
     console.log('  Run "Flag entry as outdated" or "Delete entry" to clean them up.\n')

@@ -16,9 +16,11 @@ const FLAG_THRESHOLD        = parseFloat(process.env.KB_FLAG_THRESHOLD        ||
 export async function detectAndHandleDuplicates(newEntry, jiraIssueKey) {
   console.log(`\n  Running duplicate check for "${newEntry.title}"...`)
 
+  const projectKey = newEntry.metadata?.project_key || null
+
   const res = await db.query(
-    `SELECT * FROM find_duplicates($1::vector, $2::text, $3)`,
-    [JSON.stringify(newEntry.embedding), newEntry.id, FLAG_THRESHOLD]
+    `SELECT * FROM find_duplicates($1::vector, $2::text, $3, $4::text)`,
+    [JSON.stringify(newEntry.embedding), newEntry.id, FLAG_THRESHOLD, projectKey]
   )
 
   const candidates = res.rows

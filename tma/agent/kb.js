@@ -40,9 +40,10 @@ export async function embed(text) {
 
 /**
  * Retrieve top-K KB entries semantically similar to the query.
+ * Pass projectKey to scope results to a single Jira project (recommended).
  * Skips entries flagged as outdated.
  */
-export async function retrieveKB(query, topK = 8) {
+export async function retrieveKB(query, topK = 8, projectKey = null) {
   const embedding = await embed(query)
 
   const res = await db.query(`
@@ -61,9 +62,10 @@ export async function retrieveKB(query, topK = 8) {
       1 - (embedding <=> $1::vector) AS similarity
     FROM   kb_documents
     WHERE  (outdated IS NULL OR outdated = false)
+      AND  ($3::text IS NULL OR metadata->>'project_key' = $3)
     ORDER  BY embedding <=> $1::vector
     LIMIT  $2
-  `, [JSON.stringify(embedding), topK])
+  `, [JSON.stringify(embedding), topK, projectKey])
 
   // Warn if any high-similarity result was skipped due to being outdated
   const outdatedCheck = await db.query(`
@@ -73,10 +75,11 @@ export async function retrieveKB(query, topK = 8) {
       1 - (embedding <=> $1::vector) AS similarity
     FROM   kb_documents
     WHERE  outdated = true
+      AND  ($3::text IS NULL OR metadata->>'project_key' = $3)
       AND  1 - (embedding <=> $1::vector) > 0.85
     ORDER  BY similarity DESC
     LIMIT  3
-  `, [JSON.stringify(embedding)])
+  `, [JSON.stringify(embedding), topK, projectKey])
 
   if (outdatedCheck.rows.length > 0) {
     console.warn(`  ⚠️  Skipped ${outdatedCheck.rows.length} outdated KB entries similar to your query:`)
@@ -102,13 +105,16 @@ export async function writeToKB(approvedTest, jiraIssueKey) {
 
   const embedding = await embed(textToEmbed)
 
+  const projectKey = jiraIssueKey ? jiraIssueKey.split('-')[0] : (approvedTest.jiraKey ? approvedTest.jiraKey.split('-')[0] : null)
+
   const metadata = {
     title:          approvedTest.title,
     feature_area:   approvedTest.feature || approvedTest.featureArea || null,
     component:      approvedTest.component || null,
     sprint:         approvedTest.sprint || null,
     zephyr_key:     approvedTest.zephyrKey || null,
-    jira_issue_key: approvedTest.jiraKey || null,
+    jira_issue_key: approvedTest.jiraKey || jiraIssueKey || null,
+    project_key:    projectKey,
     approved_by:    approvedTest.approvedBy || 'system',
     doc_type:       'test_case',
     test_type:      approvedTest.testType || 'functional',
