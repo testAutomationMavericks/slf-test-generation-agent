@@ -2,11 +2,9 @@
 // Shared types between React client and Express server
 
 export type AIProvider = 'claudecode' | 'anthropic' | 'openai' | 'local'
-export type AppMode = 'mock' | 'live'
 export type ApprovalStatus = 'pending' | 'approved' | 'partial' | 'rejected' | 'uploaded'
 
 export interface UIConfig {
-  mode: AppMode
   aiProvider: AIProvider
   jiraUrl: string
   jiraBearerToken: string
@@ -70,8 +68,6 @@ export interface KBStats {
 }
 
 export interface ServerStatus {
-  mcpConnected: boolean
-  mode: AppMode
   kbBackend: 'pgvector'
   aiProvider: AIProvider
   model: string

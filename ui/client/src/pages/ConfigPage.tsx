@@ -1,7 +1,7 @@
 // ui/client/src/pages/ConfigPage.tsx
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
-import type { UIConfig, AIProvider, AppMode, KBBackend } from '../types/api'
+import type { UIConfig, AIProvider } from '../types/api'
 
 interface Props { onSaved: () => void }
 
@@ -172,17 +172,7 @@ export function ConfigPage({ onSaved }: Props) {
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }}>
         <div style={{ maxWidth: 700 }}>
 
-          {/* ── Section 1: Data Source ─────────────────────────────────────── */}
-          <div style={S.section}>
-            <div style={S.label}>🔌 Data Source Mode</div>
-            <div style={S.note('rgba(61,153,112,.3)', 'rgba(61,153,112,.04)')}>
-              🟢 Live mode — Connected to your Atlassian Jira, Confluence, and Zephyr Scale instances.
-            </div>
-          </div>
-
-          <div style={S.divider} />
-
-          {/* ── Section 2: KB Backend ──────────────────────────────────────── */}
+          {/* ── Section 1: KB Backend ─────────────────────────────────────── */}
           <div style={S.section}>
             <div style={S.label}>🗄 Knowledge Base Storage</div>
             {(() => {

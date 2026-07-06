@@ -21,8 +21,6 @@ import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { spawn, spawnSync } from 'child_process';
 import Anthropic from '@anthropic-ai/sdk';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { PgKnowledgeBase } from '../src/kb/pg-vector-db.js';
 import type { IKnowledgeBase } from '../src/kb/interface.js';
 import { retrieveKBContext, type KBScope } from '../src/kb/retrieve-context.js';
@@ -93,7 +91,6 @@ let approvalStore: any;
 const CONFIG_PATH = path.join(ROOT, 'ui-config.json');
 
 export interface UIConfig {
-  mode: 'mock' | 'live';
   /** Which AI engine to use for generation */
   aiProvider: 'claudecode' | 'anthropic' | 'openai' | 'local';
   /** @deprecated use aiProvider */
@@ -139,7 +136,6 @@ function loadConfig(): UIConfig {
     return { aiProvider: 'claudecode', ...saved };
   }
   return {
-    mode: 'live',
     aiProvider: 'claudecode',
     jiraUrl: process.env.JIRA_URL ?? '',
     jiraBearerToken: process.env.JIRA_BEARER_TOKEN ?? '',
@@ -206,109 +202,6 @@ function broadcast(event: string, data: unknown) {
 
 // ─── MCP clients (used by API mode only) ─────────────────────────────────────
 
-let mcpClients: { jira?: Client; confluence?: Client; zephyr?: Client } = {};
-let mcpConnected = false;
-
-async function startMockClient(name: string, file: string): Promise<Client> {
-  // Use the local tsx binary from node_modules to avoid PATH issues
-  const tsxBin = path.join(ROOT, 'node_modules', '.bin', 'tsx');
-  const tsxCmd = fs.existsSync(tsxBin) ? tsxBin : 'npx';
-  const tsxArgs = fs.existsSync(tsxBin)
-    ? [path.join(ROOT, file)]
-    : ['tsx', path.join(ROOT, file)];
-
-  const transport = new StdioClientTransport({
-    command: tsxCmd,
-    args: tsxArgs,
-    cwd: ROOT,
-    env: { ...process.env, NODE_ENV: 'development' },
-  });
-  const client = new Client({ name, version: '1.0.0' });
-  await client.connect(transport);
-  return client;
-}
-
-
-// ─── Sync .mcp.json with current mode ────────────────────────────────────────
-
-/**
- * When Claude Code runs `--print`, it reads .mcp.json in the project root
- * to start its own MCP servers. We rewrite .mcp.json to match the UI's
- * current mode (mock or live) so Claude Code uses the same servers.
- */
-function syncMCPJson() {
-  const mockConfig = {
-    mcpServers: {
-      jira:       { command: 'npx', args: ['tsx', 'src/mocks/jira-server.ts'] },
-      confluence: { command: 'npx', args: ['tsx', 'src/mocks/confluence-server.ts'] },
-      zephyr:     { command: 'npx', args: ['tsx', 'src/mocks/zephyr-server.ts'] },
-    },
-  };
-
-  const liveConfig = {
-    mcpServers: {},
-  };
-
-  const chosen = config.mode === 'mock' ? mockConfig : liveConfig;
-  const mcpPath = path.join(ROOT, '.mcp.json');
-  fs.writeFileSync(mcpPath, JSON.stringify(chosen, null, 2));
-  console.log(`  .mcp.json synced for ${config.mode} mode`);
-}
-
-let connectingPromise: Promise<void> | null = null;
-
-async function connectMCP() {
-  // Deduplicate concurrent connection attempts
-  if (connectingPromise) return connectingPromise;
-  connectingPromise = _doConnect().finally(() => { connectingPromise = null; });
-  return connectingPromise;
-}
-
-async function _doConnect() {
-  syncMCPJson();
-
-  // Close existing clients
-  for (const c of [mcpClients.jira, mcpClients.confluence, mcpClients.zephyr]) {
-    if (c !== mcpClients.jira || c === mcpClients.confluence) { // avoid double-close of same client
-      await c?.close().catch(() => {});
-    }
-  }
-  mcpClients = {}; mcpConnected = false;
-
-  broadcast('status', { type: 'connecting', message: 'Connecting MCP…' });
-  console.log(`\n  Connecting MCP servers (mode: ${config.mode})…`);
-
-  if (config.mode === 'mock') {
-    // Connect mock servers one at a time for clearer error messages
-    try {
-      console.log('  Starting mock-jira…');
-      const jira = await startMockClient('mock-jira', 'src/mocks/jira-server.ts');
-      console.log('  ✓ mock-jira');
-
-      console.log('  Starting mock-confluence…');
-      const confluence = await startMockClient('mock-confluence', 'src/mocks/confluence-server.ts');
-      console.log('  ✓ mock-confluence');
-
-      console.log('  Starting mock-zephyr…');
-      const zephyr = await startMockClient('mock-zephyr', 'src/mocks/zephyr-server.ts');
-      console.log('  ✓ mock-zephyr');
-
-      mcpClients = { jira, confluence, zephyr };
-    } catch (err) {
-      console.error('  ✗ MCP connection failed:', err);
-      broadcast('status', { type: 'error', message: `MCP failed: ${err}` });
-      throw err;
-    }
-  } else {
-    // Live mode uses direct REST APIs — no MCP processes needed
-    console.log('  ✓ Live mode: using direct REST APIs (no MCP required)');
-    mcpClients = {};
-  }
-
-  mcpConnected = true;
-  console.log('  ✓ All MCP servers connected\n');
-  broadcast('status', { type: 'connected', message: `Connected (${config.mode})` });
-}
 
 // ─── Generation: Claude Code mode ─────────────────────────────────────────────
 
@@ -619,7 +512,6 @@ app.post('/api/config', async (req, res) => {
   const prevDbUrl = (config as any)._prevDbUrl ?? '';
   (config as any)._prevDbUrl = config.databaseUrl || process.env.DATABASE_URL || '';
   saveConfig(config);
-  syncMCPJson(); // keep .mcp.json in sync whenever config changes
 
   // Hot-swap KB + approval store if database config changed
   const newDbUrl = buildDbUrl(config.databaseUrl || process.env.DATABASE_URL, config.dbName || process.env.DB_NAME);
@@ -645,8 +537,6 @@ app.get('/api/status', async (_req, res) => {
   const kbStatsRaw = db.getStats();
   const kbStats = kbStatsRaw instanceof Promise ? await kbStatsRaw : kbStatsRaw;
   res.json({
-    mcpConnected,
-    mode: config.mode,
     kbBackend: 'pgvector',
     aiProvider: config.aiProvider ?? 'claudecode',
     claudeMode: config.aiProvider ?? 'claudecode',
@@ -691,21 +581,12 @@ app.post('/api/claudecode/test', async (_req, res) => {
 app.get('/api/debug', async (_req, res) => {
   const tsxBin = path.join(ROOT, 'node_modules', '.bin', 'tsx');
   const tsxExists = fs.existsSync(tsxBin);
-  const mockFiles = [
-    'src/mocks/jira-server.ts',
-    'src/mocks/confluence-server.ts',
-    'src/mocks/zephyr-server.ts',
-  ].map(f => ({ file: f, exists: fs.existsSync(path.join(ROOT, f)) }));
-
   const cc = await checkClaudeCode();
 
   res.json({
     ROOT,
-    mode: config.mode,
     claudeMode: config.claudeMode,
-    mcpConnected,
     tsx: { bin: tsxBin, exists: tsxExists },
-    mockFiles,
     claudeCode: cc,
     nodeVersion: process.version,
     env: {
@@ -985,10 +866,8 @@ async function directZephyrAddSteps(
 }
 
 
-// Connect MCP
-app.post('/api/connect', async (_req, res) => {
-  try { await connectMCP(); res.json({ ok: true, mode: config.mode }); }
-  catch (err) { res.status(500).json({ error: String(err) }); }
+app.post('/api/connect', (_req, res) => {
+  res.json({ ok: true });
 });
 
 function defaultJiraJql(): string {
@@ -1115,13 +994,6 @@ app.get('/api/test/db', async (_req, res) => {
 // Jira
 app.get('/api/jira/issues', async (req, res) => {
   try {
-    if (config.mode === 'mock') {
-      if (!mcpConnected) await connectMCP();
-      const jql = (req.query.jql as string) || defaultJiraJql();
-      const result = await mcpClients.jira!.callTool({ name: 'jira_search', arguments: { jql, max_results: 30 } });
-      const text = (result.content as Array<{text:string}>)[0]?.text ?? '[]';
-      return res.json(JSON.parse(text));
-    }
     const jql = (req.query.jql as string) || defaultJiraJql();
     res.json(await directJiraSearch(jql));
   } catch (err) {
@@ -1132,11 +1004,6 @@ app.get('/api/jira/issues', async (req, res) => {
 
 app.get('/api/jira/issue/:key', async (req, res) => {
   try {
-    if (config.mode === 'mock') {
-      if (!mcpConnected) await connectMCP();
-      const result = await mcpClients.jira!.callTool({ name: 'jira_get_issue', arguments: { issue_key: req.params.key } });
-      return res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '{}'));
-    }
     res.json(await directJiraIssue(req.params.key));
   } catch (err) { res.status(500).json({ error: String(err) }); }
 });
@@ -1144,11 +1011,6 @@ app.get('/api/jira/issue/:key', async (req, res) => {
 // Zephyr
 app.get('/api/zephyr/testcases/:issueKey', async (req, res) => {
   try {
-    if (config.mode === 'mock') {
-      if (!mcpConnected) await connectMCP();
-      const result = await mcpClients.zephyr!.callTool({ name: 'zephyr_get_test_cases_by_issue', arguments: { issueKey: req.params.issueKey } });
-      return res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '[]'));
-    }
     res.json(await directZephyrTestCases(req.params.issueKey));
   } catch (err) { res.status(500).json({ error: String(err) }); }
 });
@@ -1158,12 +1020,6 @@ app.get('/api/zephyr/testcases/:issueKey', async (req, res) => {
 app.post('/api/jira/comment', async (req, res) => {
   const { issueKey, comment } = req.body as { issueKey: string; comment: string };
   try {
-    if (config.mode === 'mock') {
-      if (!mcpConnected) await connectMCP();
-      const result = await mcpClients.jira!.callTool({ name: 'jira_add_comment', arguments: { issue_key: issueKey, comment } });
-      const text = (result.content as Array<{text:string}>)[0]?.text ?? '{}';
-      return res.json(JSON.parse(text));
-    }
     await directJiraComment(issueKey, comment);
     res.json({ ok: true });
   } catch (err) {
@@ -1248,8 +1104,6 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
     return res.status(400).json({ error: `Cannot upload — status is ${apr.status}. Needs approval first.` });
   }
 
-  if (config.mode === 'mock' && !mcpConnected) await connectMCP();
-
   const toUpload = apr.testCases.filter(t => t.approved);
   if (!toUpload.length) return res.status(400).json({ error: 'No approved test cases to upload' });
 
@@ -1258,7 +1112,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
 
   // Resolve Jira numeric issueId — needed by Zephyr POST /links/issues
   let resolvedJiraIssueId: string | undefined = (apr as any).jiraIssueId;
-  if (!resolvedJiraIssueId && config.mode === 'live') {
+  if (!resolvedJiraIssueId) {
     try {
       const jiraBase = config.jiraUrl.replace(/\/$/, '');
       const jr = await fetch(`${jiraBase}/rest/api/3/issue/${apr.issueKey}?fields=summary`, { headers: atlassianHeaders() });
@@ -1283,15 +1137,11 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         labels: ['approved', 'test-agent', apr.issueKey.toLowerCase()],
         issueLinks: [apr.issueKey],
       };
-      const created = config.mode === 'mock'
-        ? JSON.parse(((await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: payload })).content as Array<{text:string}>)[0]?.text ?? '{}').created
-        : await directZephyrCreate(payload);
+      const created = await directZephyrCreate(payload);
       if (created?.key) {
         uploadedKeys.push(created.key);
-        if (config.mode === 'live') {
-          await directZephyrAddSteps(created.key, steps);
-          await directZephyrSetIssueLink(created.key, resolvedJiraIssueId ?? apr.issueKey);
-        }
+        await directZephyrAddSteps(created.key, steps);
+        await directZephyrSetIssueLink(created.key, resolvedJiraIssueId ?? apr.issueKey);
       }
     } catch (err) {
       failed.push(tc.name);
@@ -1340,11 +1190,7 @@ ${tcLines}
 All test cases have been added to the team Knowledge Base for future reference.`;
 
     try {
-      if (config.mode === 'mock') {
-        await mcpClients.jira!.callTool({ name: 'jira_add_comment', arguments: { issue_key: apr.issueKey, comment } });
-      } else {
-        await directJiraComment(apr.issueKey, comment);
-      }
+      await directJiraComment(apr.issueKey, comment);
       console.log(`  Jira comment posted to ${apr.issueKey}`);
     } catch (err) {
       console.warn(`  Jira comment failed (non-fatal):`, err);
@@ -1378,11 +1224,6 @@ app.delete('/api/approvals/:id', async (req, res) => {
 
 app.post('/api/zephyr/create', async (req, res) => {
   try {
-    if (config.mode === 'mock') {
-      if (!mcpConnected) await connectMCP();
-      const result = await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: req.body });
-      return res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '{}'));
-    }
     const { projectKey, name, objective, precondition, priority, folder, labels, steps } = req.body;
     const payload: Record<string, unknown> = {
       projectKey, name,
@@ -1416,7 +1257,7 @@ app.post('/api/generate', async (req, res) => {
   let confluenceContext = '';
   let existingTestsContext = '';
 
-  if (issueKey && config.mode === 'live') {
+  if (issueKey) {
     try {
       const issue = await directJiraIssue(issueKey);
       issueContext = [
@@ -1458,13 +1299,6 @@ app.post('/api/generate', async (req, res) => {
         console.log(`  Zephyr: no active tests found`);
       }
     } catch (e) { console.log(`  Zephyr fetch skipped: ${e}`); }
-  } else if (issueKey && config.mode === 'mock') {
-    try {
-      if (!mcpConnected) await connectMCP();
-      const issueResult = await mcpClients.jira?.callTool({ name: 'jira_get_issue', arguments: { issue_key: issueKey } });
-      const issueText = (issueResult?.content as Array<{text:string}>)?.[0]?.text ?? '';
-      if (issueText) issueContext = issueText.slice(0, 3000);
-    } catch { /* continue without live data */ }
   }
 
   // ── 2. Retrieve KB context for this issue ────────────────────────────────────
@@ -1730,7 +1564,6 @@ httpServer.listen(Number(PORT), HOST, async () => {
   console.log(`  Local:   http://localhost:${PORT}`);
   console.log(`  Network: http://${SERVER_IP}:${PORT}  ← share with teammates`);
   console.log('━'.repeat(58));
-  syncMCPJson();
 
   const cc = await checkClaudeCode();
   if (cc.available) {
@@ -1739,6 +1572,4 @@ httpServer.listen(Number(PORT), HOST, async () => {
     console.log(`  ⚠ Claude Code not found — run: claude login`);
   }
   console.log('━'.repeat(58) + '\n');
-
-  if (config.mode === 'mock') connectMCP().catch(e => console.error('MCP connect error:', e));
 });

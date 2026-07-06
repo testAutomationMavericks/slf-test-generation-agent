@@ -25,7 +25,6 @@ const NAV_ITEMS: Array<{ id: Page; label: string }> = [
 export function Header({ status, page, onNav }: Props) {
   const connected = status !== null && status !== undefined
   const provider  = status?.aiProvider ?? 'claudecode'
-  const mode      = status?.mode ?? 'mock'
 
   return (
     <header style={{
@@ -146,18 +145,6 @@ export function Header({ status, page, onNav }: Props) {
 
         {/* Divider */}
         <div style={{ width: 1, height: 18, background: '#222', marginRight: 20 }} />
-
-        {/* Data source badge — MOCK or LIVE */}
-        <span style={{
-          fontFamily: "'DM Mono', monospace",
-          fontSize: 10, fontWeight: 600, letterSpacing: '.1em',
-          textTransform: 'uppercase',
-          color: mode === 'mock' ? '#bbb' : '#3d9970',
-          border: `1px solid ${mode === 'mock' ? '#666' : 'rgba(61,153,112,.4)'}`,
-          padding: '3px 8px', marginRight: 6,
-        }}>
-          {mode === 'mock' ? 'MOCK' : 'LIVE'}
-        </span>
 
         {/* KB backend badge — PG (green = connected, gray = not configured) */}
         <span style={{
