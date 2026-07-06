@@ -194,7 +194,7 @@ export function KBPage({ kbStats, onStatsChange }: Props) {
       {/* List */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 22px' }}>
         {ids.length === 0 && (
-          <div style={{ color: 'var(--text3)', fontSize: 12 }}>Empty — click Re-seed to populate.</div>
+          <div style={{ color: 'var(--text3)', fontSize: 12 }}>No documents in the Knowledge Base yet.</div>
         )}
         {ids.map(id => {
           const src = id.split(':')[0] ?? 'unknown'
