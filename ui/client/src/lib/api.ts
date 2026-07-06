@@ -24,8 +24,7 @@ export const api = {
   status: () => req<ServerStatus>('GET', '/api/status'),
   getConfig: () => req<UIConfig>('GET', '/api/config'),
   setConfig: (c: Partial<UIConfig>) => req<{ ok: boolean }>('POST', '/api/config', c),
-  connect: () => req<{ ok: boolean }>('POST', '/api/connect'),
-  checkClaudeCode: () => req<{ available: boolean; version?: string }>('GET', '/api/claudecode/check'),
+checkClaudeCode: () => req<{ available: boolean; version?: string }>('GET', '/api/claudecode/check'),
   debug: () => req<Record<string, unknown>>('GET', '/api/debug'),
 
   // Jira
@@ -75,6 +74,10 @@ export const api = {
       error?: string;
     }>,
 
+  // Generation options
+  getGenOptions: () => req<GenOptions>('GET', '/api/gen-options'),
+  setGenOptions: (o: GenOptions) => req<{ ok: boolean }>('POST', '/api/gen-options', o),
+
   // Generate (SSE stream)
   generateStream: (issueKey: string | undefined, prompt: string): EventSource => {
     // POST with SSE requires fetch + ReadableStream (not EventSource)
@@ -82,12 +85,21 @@ export const api = {
   },
 }
 
+export interface GenOptions {
+  priorities: string[]
+  types: string[]
+}
+
 // Generate returns a ReadableStream (POST + SSE)
-export async function* generateStream(issueKey: string | undefined, prompt: string, issueDetail?: unknown) {
+export async function* generateStream(issueKey: string | undefined, prompt: string, issueDetail?: unknown, genOptions?: GenOptions) {
   const res = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issueKey, prompt, issueDetail }),
+    body: JSON.stringify({
+      issueKey, prompt, issueDetail,
+      genPriorities: genOptions?.priorities,
+      genTypes:      genOptions?.types,
+    }),
   })
   if (!res.ok) throw new Error(await res.text())
   if (!res.body) throw new Error('No response body')

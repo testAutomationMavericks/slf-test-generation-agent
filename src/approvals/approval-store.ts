@@ -99,33 +99,68 @@ export class PgApprovalStore implements IApprovalStore {
 
   async load(id: string): Promise<ApprovalRequest | null> {
     if (!this.connected) { logger.warn('PgApprovalStore: not connected, cannot load approval'); return null; }
-    const rows = await this.sql`SELECT data FROM approvals WHERE id = ${id}`;
-    return rows[0]?.data ?? null;
+    try {
+      const rows = await this.sql`SELECT data FROM approvals WHERE id = ${id}`;
+      const raw = rows[0]?.data;
+      if (!raw) return null;
+      // postgres.js returns JSONB as a parsed object; guard against rare string case
+      if (typeof raw === 'string') {
+        logger.warn(`PgApprovalStore: data for "${id}" was a string, parsing manually`);
+        return JSON.parse(raw) as ApprovalRequest;
+      }
+      if (typeof raw === 'object' && !Array.isArray(raw) && !(raw as any).testCases) {
+        logger.warn(`PgApprovalStore: approval "${id}" loaded but testCases is missing — keys: ${Object.keys(raw).join(', ')}`);
+      }
+      return raw as ApprovalRequest;
+    } catch (e) {
+      logger.warn(`PgApprovalStore: error loading approval "${id}":`, e);
+      return null;
+    }
   }
 
   async loadAll(): Promise<ApprovalRequest[]> {
     if (!this.connected) { logger.warn('PgApprovalStore: not connected, returning empty list'); return []; }
-    const rows = await this.sql`SELECT data FROM approvals ORDER BY created_at DESC`;
-    return rows.map((r: any) => r.data as ApprovalRequest);
+    try {
+      const rows = await this.sql`SELECT data FROM approvals ORDER BY created_at DESC`;
+      return rows.map((r: any) => {
+        const raw = r.data;
+        if (!raw) return null;
+        if (typeof raw === 'string') { try { return JSON.parse(raw) as ApprovalRequest; } catch { return null; } }
+        return raw as ApprovalRequest;
+      }).filter(Boolean) as ApprovalRequest[];
+    } catch (e) {
+      logger.warn('PgApprovalStore: error loading approvals:', e);
+      return [];
+    }
   }
 
   async save(approval: ApprovalRequest): Promise<void> {
     if (!this.connected) { logger.warn(`PgApprovalStore: not connected, cannot save "${approval.id}"`); return; }
-    await this.sql`
-      INSERT INTO approvals (id, data, status)
-      VALUES (${approval.id}, ${JSON.stringify(approval)}::jsonb, ${approval.status})
-      ON CONFLICT (id) DO UPDATE SET
-        data       = ${JSON.stringify(approval)}::jsonb,
-        status     = ${approval.status},
-        updated_at = NOW()
-    `;
-    logger.info(`PgApprovalStore: saved approval ${approval.id} (${approval.status})`);
+    try {
+      await this.sql`
+        INSERT INTO approvals (id, data, status)
+        VALUES (${approval.id}, ${JSON.stringify(approval)}::jsonb, ${approval.status})
+        ON CONFLICT (id) DO UPDATE SET
+          data       = ${JSON.stringify(approval)}::jsonb,
+          status     = ${approval.status},
+          updated_at = NOW()
+      `;
+      logger.info(`PgApprovalStore: saved approval ${approval.id} (${approval.status})`);
+    } catch (e) {
+      logger.warn(`PgApprovalStore: error saving approval "${approval.id}":`, e);
+      throw e;
+    }
   }
 
   async delete(id: string): Promise<void> {
     if (!this.connected) { logger.warn(`PgApprovalStore: not connected, cannot delete "${id}"`); return; }
-    await this.sql`DELETE FROM approvals WHERE id = ${id}`;
-    logger.info(`PgApprovalStore: deleted approval ${id}`);
+    try {
+      await this.sql`DELETE FROM approvals WHERE id = ${id}`;
+      logger.info(`PgApprovalStore: deleted approval ${id}`);
+    } catch (e) {
+      logger.warn(`PgApprovalStore: error deleting approval "${id}":`, e);
+      throw e;
+    }
   }
 
   async disconnect() {

@@ -142,7 +142,6 @@ function DbTestBtn({ onSave }: { onSave?: () => Promise<void> }) {
 export function ConfigPage({ onSaved }: Props) {
   const [cfg, setCfg] = useState<Partial<UIConfig>>({})
   const [saved, setSaved] = useState(false)
-  const [testing, setTesting] = useState(false)
   const [ccStatus, setCcStatus] = useState<{ available: boolean; version?: string } | null>(null)
 
   useEffect(() => {
@@ -161,12 +160,6 @@ export function ConfigPage({ onSaved }: Props) {
     onSaved()
   }
 
-  const testConn = async () => {
-    setTesting(true)
-    try { await save(); await api.connect(); alert('✓ Connected successfully!') }
-    catch (e: unknown) { alert('Failed: ' + (e instanceof Error ? e.message : String(e))) }
-    finally { setTesting(false) }
-  }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -401,9 +394,6 @@ export function ConfigPage({ onSaved }: Props) {
         background: '#f4f3f0', display: 'flex', gap: 10, alignItems: 'center',
       }}>
         <button className="btn btn-primary" onClick={save}>Save & Apply</button>
-        <button className="btn btn-secondary" onClick={testConn} disabled={testing}>
-          {testing ? <span className="spinner" /> : null} Test Connection
-        </button>
         {saved && (
           <span style={{ fontSize: 12, color: '#2a7a50', fontWeight: 600 }}>✓ Saved</span>
         )}

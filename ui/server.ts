@@ -99,6 +99,9 @@ export interface UIConfig {
   dbName: string;       // database name — appended to databaseUrl to form the full connection string
   kbScopeMode: 'project' | 'multi' | 'all';  // KB retrieval scope during generation
   kbScopeProjects: string[];                  // projects to include when mode is 'multi'
+  // ── Generation preferences ─────────────────────────────────────────────────
+  genPriorities: string[];   // e.g. ['Critical', 'High']
+  genTypes: string[];        // e.g. ['Functional', 'Regression', 'Edge Case', 'Negative', 'Security']
 }
 
 function loadConfig(): UIConfig {
@@ -136,6 +139,8 @@ function loadConfig(): UIConfig {
     dbName: process.env.DB_NAME ?? '',
     kbScopeMode: 'project',
     kbScopeProjects: [],
+    genPriorities: ['Critical', 'High'],
+    genTypes: ['Functional', 'Regression', 'Edge Case', 'Negative', 'Security'],
   };
 }
 
@@ -511,13 +516,66 @@ app.post('/api/config', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Generation options — lightweight read/write separate from full config save
+app.get('/api/gen-options', (_req, res) => {
+  res.json({
+    priorities: config.genPriorities ?? ['Critical', 'High'],
+    types:      config.genTypes      ?? ['Functional', 'Regression', 'Edge Case', 'Negative', 'Security'],
+  });
+});
+
+app.post('/api/gen-options', (req, res) => {
+  const { priorities, types } = req.body as { priorities?: string[]; types?: string[] };
+  if (Array.isArray(priorities)) config.genPriorities = priorities;
+  if (Array.isArray(types))      config.genTypes      = types;
+  saveConfig(config);
+  res.json({ ok: true });
+});
+
 // Status
+// Cache Claude Code check — spawning a subprocess on every poll is slow
+let _ccCache: { available: boolean; version?: string; error?: string } | null = null;
+let _ccCacheAt = 0;
+async function checkClaudeCodeCached() {
+  if (_ccCache && Date.now() - _ccCacheAt < 30_000) return _ccCache;
+  _ccCache = await checkClaudeCode();
+  _ccCacheAt = Date.now();
+  return _ccCache;
+}
+
 app.get('/api/status', async (_req, res) => {
-  const ccCheck = await checkClaudeCode();
-  const kbStatsRaw = db.getStats();
+  // Run slow checks in parallel, cap DB at 3 s so the response is always fast
+  const dbTimeout = new Promise<boolean>(r => setTimeout(() => r(false), 3000));
+  const dbCheck = typeof (db as any).isHealthy === 'function'
+    ? (db as any).isHealthy().catch(() => false)
+    : Promise.resolve(false);
+
+  const [ccCheck, kbStatsRaw, dbConnected] = await Promise.all([
+    checkClaudeCodeCached(),
+    db.getStats(),
+    Promise.race([dbCheck, dbTimeout]),
+  ]);
+
   const kbStats = kbStatsRaw instanceof Promise ? await kbStatsRaw : kbStatsRaw;
+
+  const services = {
+    jira:       !!(config.jiraUrl       && (config.jiraBearerToken || config.jiraApiToken)),
+    confluence: !!(config.confluenceUrl && (config.confluenceApiToken || config.jiraBearerToken || config.jiraApiToken)),
+    zephyr:     !!(config.zephyrBaseUrl && config.zephyrApiToken),
+    db:         dbConnected,
+    ai:         config.aiProvider === 'claudecode'
+                  ? ccCheck.available
+                  : config.aiProvider === 'anthropic'
+                    ? !!config.anthropicApiKey
+                    : config.aiProvider === 'openai'
+                      ? !!config.openaiApiKey
+                      : false,
+  };
+
   res.json({
     kbBackend: 'pgvector',
+    dbConnected,
+    services,
     aiProvider: config.aiProvider ?? 'claudecode',
     claudeMode: config.aiProvider ?? 'claudecode',
     model: config.aiProvider === 'openai' ? config.openaiModel
@@ -846,9 +904,6 @@ async function directZephyrAddSteps(
 }
 
 
-app.post('/api/connect', (_req, res) => {
-  res.json({ ok: true });
-});
 
 function defaultJiraJql(): string {
   if (config.jiraEpicKey) {
@@ -1131,6 +1186,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
 
   // 2. Save each uploaded test to KB individually (unique ID per test)
   let kbSavedCount = 0;
+  const kbDuplicates: Array<{ newKey: string; dup: { id: string; title: string; similarity: number; action: string } }> = [];
   for (let ki = 0; ki < uploadedKeys.length; ki++) {
     const tc = toUpload[ki];
     if (!tc) continue;
@@ -1146,6 +1202,9 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
       doc.id = `generated:${uploadedKeys[ki]}:${apr.issueKey}`;
       await db.addDocument(doc);
       kbSavedCount++;
+      // Collect any near-duplicates detected by PgKnowledgeBase
+      const dupes = (db as any).getLastDuplicates?.() ?? [];
+      for (const dup of dupes) kbDuplicates.push({ newKey: uploadedKeys[ki], dup });
     } catch (e) {
       console.warn(`KB save failed for ${uploadedKeys[ki]}:`, e);
     }
@@ -1159,6 +1218,22 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
       .map((tc, i) => `- *${uploadedKeys[i]}* — ${tc.name}`)
       .join('\n');
 
+    const dupLines = kbDuplicates
+      .filter(d => d.dup.action === 'flagged')
+      .map(d => {
+        const oldKey = d.dup.id.match(/([A-Z]+-T\d+)/)?.[1] ?? d.dup.id;
+        return `- *${d.newKey}* is ${(d.dup.similarity * 100).toFixed(0)}% similar to _${oldKey}_ (${d.dup.title}) — the older entry has been flagged as outdated in the Knowledge Base`;
+      }).join('\n');
+
+    const autoDel = kbDuplicates.filter(d => d.dup.action === 'auto_deleted');
+    const autoDelLine = autoDel.length > 0
+      ? `\n${autoDel.map(d => `- *${d.newKey}* replaced a near-identical KB entry (${d.dup.id}) which has been automatically removed`).join('\n')}`
+      : '';
+
+    const dupSection = (dupLines || autoDelLine)
+      ? `\n\n⚠️ *Duplicate detection — please review:*\n${dupLines}${autoDelLine}`
+      : '';
+
     const comment = `✅ *Test cases approved and uploaded to Zephyr Scale*
 
 Approved by: *${apr.approvedBy}* on ${new Date(apr.approvedAt!).toLocaleDateString()}
@@ -1167,7 +1242,7 @@ Requested by: ${apr.requestedBy}
 *Uploaded test cases (${uploadedKeys.length}):*
 ${tcLines}
 
-All test cases have been added to the team Knowledge Base for future reference.`;
+All test cases have been added to the team Knowledge Base for future reference.${dupSection}`;
 
     try {
       await directJiraComment(apr.issueKey, comment);
@@ -1224,7 +1299,8 @@ app.post('/api/zephyr/create', async (req, res) => {
 // ─── Generate (SSE stream) ────────────────────────────────────────────────────
 
 app.post('/api/generate', async (req, res) => {
-  const { issueKey, prompt: customPrompt, issueDetail: clientIssueDetail } = req.body as { issueKey?: string; prompt?: string; issueDetail?: JiraIssue };
+  const { issueKey, prompt: customPrompt, issueDetail: clientIssueDetail, genPriorities: reqPriorities, genTypes: reqTypes } =
+    req.body as { issueKey?: string; prompt?: string; issueDetail?: JiraIssue; genPriorities?: string[]; genTypes?: string[] };
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -1316,17 +1392,29 @@ app.post('/api/generate', async (req, res) => {
 
   // Always prepend the server-fetched context block, regardless of whether
   // the client sent a custom prompt — the client never has the context.
+  const activePriorities = (reqPriorities?.length ? reqPriorities : null) ?? config.genPriorities ?? ['Critical', 'High'];
+  const activeTypes      = (reqTypes?.length      ? reqTypes      : null) ?? config.genTypes      ?? ['Functional', 'Regression', 'Edge Case', 'Negative', 'Security'];
+
+  // Hard override block placed at the very top of the prompt so it wins over CLAUDE.md
+  const genOverride =
+    `⚠ GENERATION CONSTRAINTS — these override anything in CLAUDE.md:\n` +
+    `• ONLY generate test cases with Priority: ${activePriorities.join(', ')}. ` +
+    `Do NOT generate any test case with a different priority level.\n` +
+    `• ONLY generate these test types: ${activeTypes.join(', ')}. ` +
+    `Do NOT include any other test types.\n\n`;
+
   const instruction = customPrompt ??
     (issueKey
       ? `Generate comprehensive test cases for Jira issue ${issueKey}. ` +
-        `Generate test cases covering all acceptance criteria, edge cases, and negative tests. ` +
+        `Cover all acceptance criteria, edge cases, and negative tests. ` +
         `Avoid duplicating any existing Zephyr tests or KB patterns listed above. ` +
         `Always number test cases starting from TC-001. ` +
         `Follow the structure in CLAUDE.md.`
       : 'Help me generate test cases.');
 
   const prompt = issueKey
-    ? `IMPORTANT: Do NOT use any MCP tools, make any tool calls, or fetch any external data. ` +
+    ? genOverride +
+      `IMPORTANT: Do NOT use any MCP tools, make any tool calls, or fetch any external data. ` +
       `Generate test cases directly from the context provided below.\n\n` +
       (contextBlock
         ? `${contextBlock}\n\n`
@@ -1428,9 +1516,42 @@ app.post('/api/kb/import/zephyr', async (_req, res) => {
     const testCases = await directZephyrAllTestCases(projectKey);
     send(`Found ${testCases.length} test case(s) in Zephyr`);
 
-    // Idempotency: collect IDs already in KB so we skip them
+    // Idempotency: collect IDs already in KB so we skip them.
+    // Match on the Zephyr key anywhere in the document ID (e.g. generated:QAP-T137:QAP-12)
+    // so we don't re-import test cases that were previously uploaded from an approval.
     const existingIds = new Set(await db.listIds());
-    const toImport = testCases.filter(tc => !existingIds.has(`zephyr:${tc.key}`));
+    const existingZephyrKeys = new Set<string>();
+    for (const id of existingIds) {
+      const m = id.match(/([A-Z]+-T\d+)/);
+      if (m) existingZephyrKeys.add(m[1]);
+    }
+
+    // Stale-entry cleanup: if a zephyr: prefixed KB entry no longer exists in Zephyr,
+    // the test case was deleted there — remove it from KB to keep them in sync.
+    const liveZephyrKeys = new Set(testCases.map(tc => tc.key));
+    const staleIds = [...existingIds].filter(id =>
+      id.startsWith('zephyr:') && !liveZephyrKeys.has(id.slice('zephyr:'.length))
+    );
+    if (staleIds.length > 0) {
+      send(`Detected ${staleIds.length} KB entry(s) deleted from Zephyr — removing…`);
+      let cleaned = 0;
+      for (const staleId of staleIds) {
+        try {
+          await db.deleteDocument(staleId);
+          existingIds.delete(staleId);
+          const key = staleId.slice('zephyr:'.length);
+          existingZephyrKeys.delete(key);
+          cleaned++;
+        } catch (e) {
+          console.warn(`[KB import] failed to remove stale entry ${staleId}:`, e);
+        }
+      }
+      send(`Removed ${cleaned} stale KB entry(s)`);
+    }
+
+    const toImport = testCases.filter(tc =>
+      !existingIds.has(`zephyr:${tc.key}`) && !existingZephyrKeys.has(tc.key)
+    );
     const skippedCount = testCases.length - toImport.length;
 
     if (skippedCount > 0) send(`Skipping ${skippedCount} already-imported test case(s)`);
@@ -1520,9 +1641,13 @@ app.get('/approve/:id', (req, res) => {
 
 // API: get approval data for the approval page
 app.get('/api/approvals/:id/data', async (req, res) => {
-  const apr = await approvalStore.load(req.params.id);
-  if (!apr) return res.status(404).json({ error: 'Approval request not found' });
-  res.json(apr);
+  try {
+    const apr = await approvalStore.load(req.params.id);
+    if (!apr) return res.status(404).json({ error: 'Approval request not found' });
+    res.json(apr);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 
@@ -1539,7 +1664,7 @@ const SERVER_IP = process.env.SERVER_IP ?? '10.105.217.140';
 
 httpServer.listen(Number(PORT), HOST, async () => {
   console.log(`\n${'━'.repeat(58)}`);
-  console.log(`  Selfridges Test Management Agent`);
+  console.log(`  Selfridges Test Curator Agent`);
   console.log('━'.repeat(58));
   console.log(`  Local:   http://localhost:${PORT}`);
   console.log(`  Network: http://${SERVER_IP}:${PORT}  ← share with teammates`);

@@ -67,8 +67,18 @@ export interface KBStats {
   connectionUrl?: string
 }
 
+export interface ServiceStatuses {
+  jira: boolean
+  confluence: boolean
+  zephyr: boolean
+  db: boolean
+  ai: boolean
+}
+
 export interface ServerStatus {
   kbBackend: 'pgvector'
+  dbConnected: boolean
+  services: ServiceStatuses
   aiProvider: AIProvider
   model: string
   claudeCode: { available: boolean; version?: string; error?: string }

@@ -98,13 +98,30 @@ async function getQueryEmbedding(text: string, apiKey: string): Promise<number[]
 
 // ─── PgKnowledgeBase ──────────────────────────────────────────────────────────
 
+export interface DupResult {
+  id: string
+  title: string
+  similarity: number
+  action: 'flagged' | 'auto_deleted'
+}
+
 export class PgKnowledgeBase implements IKnowledgeBase {
   private sql: any
   private apiKey: string
   private connected = false
+  private connectionUrl: string
+  private _lastDuplicates: DupResult[] = []
+
+  /** Returns (and clears) duplicates found during the most recent addDocument call. */
+  public getLastDuplicates(): DupResult[] {
+    const d = this._lastDuplicates
+    this._lastDuplicates = []
+    return d
+  }
 
   constructor(connectionUrl: string, anthropicApiKey: string) {
     this.apiKey = anthropicApiKey
+    this.connectionUrl = connectionUrl
     this.initSql(connectionUrl)
   }
 
@@ -154,15 +171,16 @@ export class PgKnowledgeBase implements IKnowledgeBase {
         updated_at = NOW()
     `
     logger.info(`PgKB: upserted "${doc.id}" (${doc.source})`)
-    await this.runDuplicateCheck(doc.id, embedding, doc.metadata?.project_key || undefined)
+    this._lastDuplicates = await this.runDuplicateCheck(doc.id, embedding, doc.metadata?.project_key || undefined)
   }
 
-  // Runs after every EC2 write. Flags near-duplicates; auto-deletes near-identical ones.
+  // Runs after every write. Flags near-duplicates; auto-deletes near-identical ones.
   // Non-fatal — a dedup failure never blocks the write.
-  // projectKey scopes the check to the same project; pass undefined for global.
-  private async runDuplicateCheck(docId: string, embedding: number[], projectKey?: string): Promise<void> {
+  // Returns every candidate actioned so callers can surface warnings (e.g. Jira comment).
+  private async runDuplicateCheck(docId: string, embedding: number[], projectKey?: string): Promise<DupResult[]> {
     const autoDelete = parseFloat(process.env.KB_AUTO_DELETE_THRESHOLD || '0.97')
     const flag       = parseFloat(process.env.KB_FLAG_THRESHOLD        || '0.90')
+    const results: DupResult[] = []
 
     try {
       const candidates = await this.sql`
@@ -184,6 +202,7 @@ export class PgKnowledgeBase implements IKnowledgeBase {
             VALUES (${docId}, ${c.id}, ${c.title}, ${sim}, 'auto_deleted')
           `
           logger.warn(`PgKB dedup: auto-deleted "${c.title}" (${(sim * 100).toFixed(1)}% match)`)
+          results.push({ id: c.id, title: c.title, similarity: sim, action: 'auto_deleted' })
         } else {
           await this.sql`
             UPDATE kb_documents
@@ -199,6 +218,7 @@ export class PgKnowledgeBase implements IKnowledgeBase {
             VALUES (${docId}, ${c.id}, ${c.title}, ${sim}, 'flagged')
           `
           logger.warn(`PgKB dedup: flagged "${c.title}" (${(sim * 100).toFixed(1)}% match)`)
+          results.push({ id: c.id, title: c.title, similarity: sim, action: 'flagged' })
         }
       }
 
@@ -208,6 +228,8 @@ export class PgKnowledgeBase implements IKnowledgeBase {
     } catch (e) {
       logger.warn('PgKB: duplicate check failed (non-fatal):', e)
     }
+
+    return results
   }
 
   // ── addDocuments ────────────────────────────────────────────────────────────
@@ -356,13 +378,27 @@ export class PgKnowledgeBase implements IKnowledgeBase {
 
   // ── health check ─────────────────────────────────────────────────────────────
 
+  private _reconnecting = false
+
   async isHealthy(): Promise<boolean> {
-    if (!this.connected || !this.sql) return false
-    try {
-      await this.sql`SELECT 1`
-      return true
-    } catch {
-      return false
+    // If connected, do a quick live ping
+    if (this.connected && this.sql) {
+      try {
+        await this.sql`SELECT 1`
+        return true
+      } catch {
+        this.connected = false
+        return false
+      }
     }
+    // Not connected — try once to reconnect (guard against concurrent retries)
+    if (this._reconnecting) return false
+    this._reconnecting = true
+    try {
+      await this.initSql(this.connectionUrl)
+    } finally {
+      this._reconnecting = false
+    }
+    return this.connected
   }
 }

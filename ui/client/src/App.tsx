@@ -18,6 +18,9 @@ export default function App() {
   useEffect(() => {
     state.loadStatus()
     state.loadIssues()
+    // Refresh service statuses every 30 s so the header stays current
+    const interval = setInterval(state.loadStatus, 30_000)
+    return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

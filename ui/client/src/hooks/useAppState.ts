@@ -1,6 +1,7 @@
 // ui/client/src/hooks/useAppState.ts
 import { useState, useCallback, useRef } from 'react'
 import { api, generateStream, parseTestCases } from '../lib/api'
+import type { GenOptions } from '../lib/api'
 import type { JiraIssue, ZephyrTestCase, ServerStatus, KBStats, ReviewCase } from '../types/api'
 
 export function useAppState() {
@@ -87,7 +88,7 @@ export function useAppState() {
   }, [])
 
   // ── Generate ─────────────────────────────────────────────────────────────────
-  const generate = useCallback(async (prompt?: string) => {
+  const generate = useCallback(async (prompt?: string, genOptions?: GenOptions) => {
     if (!issueDetail) return
     setGenerating(true)
     setOutput('')
@@ -101,7 +102,7 @@ export function useAppState() {
 
     try {
       let full = ''
-      for await (const ev of generateStream(issueDetail.key, fullPrompt, issueDetail)) {
+      for await (const ev of generateStream(issueDetail.key, fullPrompt, issueDetail, genOptions)) {
         if (ev.type === 'mode') setEngine(ev.engine ?? '')
         else if (ev.type === 'chunk') { full += ev.text ?? ''; setOutput(full) }
         else if (ev.type === 'kb_context') setKbDocsFound(ev.count ?? 0)
@@ -116,6 +117,14 @@ export function useAppState() {
       setGenerating(false)
     }
   }, [issueDetail])
+
+  // ── Clear output ─────────────────────────────────────────────────────────────
+  const clearOutput = useCallback(() => {
+    setOutput('')
+    setEngine('')
+    setKbDocsFound(0)
+    setReviewCases([])
+  }, [])
 
   // ── Review cases ─────────────────────────────────────────────────────────────
   const openReview = useCallback(() => {
@@ -226,7 +235,7 @@ export function useAppState() {
     reviewCases, setReviewCases, updateReviewCase,
     curApprovalId, approvalStatus,
     loadStatus, loadIssues, selectIssue, reloadZephyr,
-    generate, openReview, sendForApproval, uploadApproved,
+    generate, clearOutput, openReview, sendForApproval, uploadApproved,
     reconnect,
   }
 }
