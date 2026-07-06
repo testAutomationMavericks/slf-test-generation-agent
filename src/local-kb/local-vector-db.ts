@@ -293,21 +293,36 @@ export function buildLocalKBContext(
   return lines.join('\n');
 }
 
+export interface KBScope {
+  mode: 'project' | 'multi' | 'all'
+  projects?: string[]
+}
+
 export async function retrieveLocalContextForIssue(
   db: IKnowledgeBase,
   issueKey: string,
   projectKey: string,
-  featureArea?: string
+  featureArea?: string,
+  kbScope?: KBScope
 ): Promise<string> {
+  // Build scope options for the broad "similar" query.
+  // The exact query (by jira_issue_key) is always unscoped — it's already specific.
+  const scopeOption: Record<string, unknown> =
+    !kbScope || kbScope.mode === 'project'
+      ? { filter: { project_key: projectKey } }
+      : kbScope.mode === 'multi' && kbScope.projects?.length
+        ? { projectKeys: kbScope.projects }
+        : {} // 'all' — no project filter
+
   const [exact, similar] = await Promise.all([
     db.retrieve(`test cases for ${issueKey}`, {
       topK: 4,
       filter: { jira_issue_key: issueKey },
     }).catch(() => []),
     db.retrieve(`acceptance criteria and tests for ${featureArea ?? projectKey}`, {
-      topK: 6,
+      topK: kbScope?.mode === 'all' ? 10 : kbScope?.mode === 'multi' ? 8 : 6,
       minScore: 0.35,
-      filter: { project_key: projectKey },
+      ...scopeOption,
     }).catch(() => []),
   ]);
 

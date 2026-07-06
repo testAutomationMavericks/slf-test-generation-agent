@@ -41,6 +41,7 @@ export const api = {
   // KB
   kbStats: () => req<KBStats>('GET', '/api/kb/stats'),
   kbList: () => req<string[]>('GET', '/api/kb/list'),
+  kbProjects: () => req<{ projects: string[] }>('GET', '/api/kb/projects'),
   kbSave: (content: string, issueKey: string, approvedBy: string) =>
     req<{ ok: boolean; stats: KBStats }>('POST', '/api/kb/save', { content, issueKey, approvedBy }),
   kbClear: () => req<{ ok: boolean }>('DELETE', '/api/kb/clear'),

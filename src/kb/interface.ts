@@ -18,6 +18,8 @@ export interface RetrieveOptions {
   topK?: number
   minScore?: number
   filter?: Partial<Record<string, string>>
+  /** Multi-project scope — overrides filter.project_key when provided */
+  projectKeys?: string[]
 }
 
 export interface KBStats {

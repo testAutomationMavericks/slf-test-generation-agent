@@ -23,7 +23,7 @@ import { spawn, spawnSync } from 'child_process';
 import Anthropic from '@anthropic-ai/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { LocalKnowledgeBase, retrieveLocalContextForIssue } from '../src/local-kb/local-vector-db.js';
+import { LocalKnowledgeBase, retrieveLocalContextForIssue, type KBScope } from '../src/local-kb/local-vector-db.js';
 import { PgKnowledgeBase } from '../src/kb/pg-vector-db.js';
 import type { IKnowledgeBase } from '../src/kb/interface.js';
 import { formatTestCaseDocument } from '../src/knowledge-base/formatters.js';
@@ -128,6 +128,8 @@ export interface UIConfig {
   kbBackend: 'local' | 'pgvector';
   databaseUrl: string;  // base URL without dbname, e.g. postgresql://user:pass@host:5432
   dbName: string;       // database name — appended to databaseUrl to form the full connection string
+  kbScopeMode: 'project' | 'multi' | 'all';  // KB retrieval scope during generation
+  kbScopeProjects: string[];                  // projects to include when mode is 'multi'
 }
 
 function loadConfig(): UIConfig {
@@ -165,6 +167,8 @@ function loadConfig(): UIConfig {
     kbBackend: process.env.DATABASE_URL ? 'pgvector' : 'local',
     databaseUrl: process.env.DATABASE_URL ?? '',
     dbName: process.env.DB_NAME ?? '',
+    kbScopeMode: 'project',
+    kbScopeProjects: [],
   };
 }
 
@@ -470,7 +474,7 @@ async function runViaAPI(
 
   const kbCtx = preloadedKbContext ?? await (async () => {
     if (!issueKey) return '';
-    try { return await retrieveLocalContextForIssue(db, issueKey, issueKey.split('-')[0]); }
+    try { return await retrieveLocalContextForIssue(db, issueKey, issueKey.split('-')[0], undefined, { mode: config.kbScopeMode ?? 'project', projects: config.kbScopeProjects }); }
     catch { return ''; }
   })();
 
@@ -1479,7 +1483,8 @@ app.post('/api/generate', async (req, res) => {
         db,
         issueKey,
         issueKey.split('-')[0],
-        undefined
+        undefined,
+        { mode: config.kbScopeMode ?? 'project', projects: config.kbScopeProjects }
       );
       if (kbResults) {
         kbContext = kbResults;
@@ -1694,6 +1699,38 @@ app.post('/api/kb/import/zephyr', async (_req, res) => {
 
 app.delete('/api/kb/clear', async (_req, res) => {
   await db.clear(); res.json({ ok: true });
+});
+
+// Returns distinct project keys present in the KB — used to populate the scope selector
+app.get('/api/kb/projects', async (_req, res) => {
+  try {
+    let projects: string[] = [];
+    if (db instanceof PgKnowledgeBase) {
+      const rows: Array<{ pk: string }> = await (db as any).sql`
+        SELECT DISTINCT metadata->>'project_key' AS pk
+        FROM   kb_documents
+        WHERE  metadata->>'project_key' IS NOT NULL
+          AND  metadata->>'project_key' != ''
+        ORDER  BY pk
+      `;
+      projects = rows.map(r => r.pk);
+    } else {
+      // Local KB: extract from document IDs (format: source:PROJ-NNN:...)
+      const ids = await db.listIds();
+      const seen = new Set<string>();
+      for (const id of ids) {
+        const parts = id.split(':');
+        if (parts.length >= 2) {
+          const proj = parts[1].split('-')[0];
+          if (proj) seen.add(proj);
+        }
+      }
+      projects = [...seen].sort();
+    }
+    res.json({ projects });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── Approval page (shareable link for teammates) ────────────────────────────

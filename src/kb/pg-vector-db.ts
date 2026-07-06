@@ -185,14 +185,19 @@ export class PgKnowledgeBase implements IKnowledgeBase {
 
   async retrieve(query: string, options: RetrieveOptions = {}): Promise<RetrieveResult[]> {
     if (!this.connected) { logger.warn('PgKB: not connected, returning empty results'); return []; }
-    const { topK = 8, minScore = 0.3, filter } = options
+    const { topK = 8, minScore = 0.3, filter, projectKeys } = options
     const queryVec = await getQueryEmbedding(query, this.apiKey)
     const vec = JSON.stringify(queryVec)
 
     // Build WHERE fragments — each is empty sql when the filter isn't set
-    const sourceF      = filter?.source          ? this.sql`AND source = ${filter.source}` : this.sql``
-    const issueF       = filter?.jira_issue_key  ? this.sql`AND metadata->>'jira_issue_key' = ${filter.jira_issue_key}` : this.sql``
-    const projectF     = filter?.project_key     ? this.sql`AND metadata->>'project_key' = ${filter.project_key}` : this.sql``
+    const sourceF  = filter?.source         ? this.sql`AND source = ${filter.source}` : this.sql``
+    const issueF   = filter?.jira_issue_key ? this.sql`AND metadata->>'jira_issue_key' = ${filter.jira_issue_key}` : this.sql``
+    // projectKeys (multi) takes priority over filter.project_key (single)
+    const projectF = projectKeys?.length
+      ? this.sql`AND metadata->>'project_key' IN ${this.sql(projectKeys)}`
+      : filter?.project_key
+        ? this.sql`AND metadata->>'project_key' = ${filter.project_key}`
+        : this.sql``
 
     const rows: any[] = await this.sql`
       SELECT id, content, metadata,

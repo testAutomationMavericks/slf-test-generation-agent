@@ -32,6 +32,8 @@ export interface UIConfig {
   kbBackend: KBBackend
   databaseUrl: string
   dbName: string
+  kbScopeMode: 'project' | 'multi' | 'all'
+  kbScopeProjects: string[]
 }
 
 export interface JiraIssue {

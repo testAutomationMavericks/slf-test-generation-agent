@@ -12,8 +12,19 @@ export function KBPage({ kbStats, onStatsChange }: Props) {
   const [importLog, setImportLog] = useState<string[]>([])
   const [importing, setImporting] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
+  const [scopeMode, setScopeMode] = useState<'project' | 'multi' | 'all'>('project')
+  const [scopeProjects, setScopeProjects] = useState<string[]>([])
+  const [availableProjects, setAvailableProjects] = useState<string[]>([])
+  const [scopeSaved, setScopeSaved] = useState(false)
 
-  useEffect(() => { loadList() }, [])
+  useEffect(() => {
+    loadList()
+    api.getConfig().then(c => {
+      setScopeMode(c.kbScopeMode ?? 'project')
+      setScopeProjects(c.kbScopeProjects ?? [])
+    }).catch(() => {})
+    api.kbProjects().then(d => setAvailableProjects(d.projects)).catch(() => {})
+  }, [])
 
   const loadList = async () => {
     try { setIds(await api.kbList()) } catch { /* ignore */ }
@@ -89,6 +100,25 @@ export function KBPage({ kbStats, onStatsChange }: Props) {
     }
   }
 
+  const saveScope = async (mode: typeof scopeMode, projects: string[]) => {
+    await api.setConfig({ kbScopeMode: mode, kbScopeProjects: projects })
+    setScopeSaved(true)
+    setTimeout(() => setScopeSaved(false), 2000)
+  }
+
+  const toggleScopeProject = (proj: string) => {
+    const next = scopeProjects.includes(proj)
+      ? scopeProjects.filter(p => p !== proj)
+      : [...scopeProjects, proj]
+    setScopeProjects(next)
+    saveScope(scopeMode, next)
+  }
+
+  const handleScopeMode = (mode: typeof scopeMode) => {
+    setScopeMode(mode)
+    saveScope(mode, scopeProjects)
+  }
+
   const SOURCE_COLORS: Record<string, string> = {
     generated: 'var(--accent)', jira: 'var(--amber)',
     confluence: 'var(--purple)', zephyr: 'var(--green)',
@@ -153,6 +183,71 @@ export function KBPage({ kbStats, onStatsChange }: Props) {
           ))}
         </div>
       )}
+
+      {/* Retrieval Scope */}
+      <div style={{
+        padding: '12px 22px', borderBottom: '1px solid var(--border)',
+        background: 'var(--bg2)', flexShrink: 0,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.06em' }}>
+            Generation Scope
+          </span>
+
+          {/* Mode buttons */}
+          {(['project', 'multi', 'all'] as const).map(mode => (
+            <button
+              key={mode}
+              onClick={() => handleScopeMode(mode)}
+              style={{
+                padding: '4px 12px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                border: '1px solid var(--border)', cursor: 'pointer',
+                background: scopeMode === mode ? 'var(--accent)' : 'var(--bg3)',
+                color: scopeMode === mode ? '#fff' : 'var(--text2)',
+              }}
+            >
+              {mode === 'project' ? 'This project' : mode === 'multi' ? 'Select projects' : 'All projects'}
+            </button>
+          ))}
+
+          {scopeSaved && (
+            <span style={{ fontSize: 11, color: 'var(--green)' }}>✓ Saved</span>
+          )}
+        </div>
+
+        {/* Project checkboxes (multi mode only) */}
+        {scopeMode === 'multi' && (
+          <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {availableProjects.length === 0 ? (
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>No projects found in KB yet.</span>
+            ) : availableProjects.map(proj => (
+              <label key={proj} style={{
+                display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer',
+                padding: '3px 10px', borderRadius: 5, fontSize: 11,
+                border: '1px solid var(--border)',
+                background: scopeProjects.includes(proj) ? 'var(--accent)18' : 'var(--bg3)',
+                color: scopeProjects.includes(proj) ? 'var(--accent)' : 'var(--text2)',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={scopeProjects.includes(proj)}
+                  onChange={() => toggleScopeProject(proj)}
+                  style={{ accentColor: 'var(--accent)', margin: 0 }}
+                />
+                {proj}
+              </label>
+            ))}
+          </div>
+        )}
+
+        {scopeMode !== 'project' && (
+          <div style={{ marginTop: 6, fontSize: 10, color: 'var(--text3)' }}>
+            {scopeMode === 'multi'
+              ? `Retrieval covers ${scopeProjects.length ? scopeProjects.join(', ') : 'no projects selected'}`
+              : 'Retrieval covers all projects — best for regression suites'}
+          </div>
+        )}
+      </div>
 
       {/* List */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 22px' }}>
