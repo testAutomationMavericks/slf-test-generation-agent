@@ -26,7 +26,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { LocalKnowledgeBase, retrieveLocalContextForIssue, type KBScope } from '../src/local-kb/local-vector-db.js';
 import { PgKnowledgeBase } from '../src/kb/pg-vector-db.js';
 import type { IKnowledgeBase } from '../src/kb/interface.js';
-import { formatTestCaseDocument } from '../src/knowledge-base/formatters.js';
+import { formatTestCaseDocument, formatZephyrDocument } from '../src/knowledge-base/formatters.js';
 import { createApprovalStore } from '../src/approvals/approval-store.js';
 import type { JiraIssue, ZephyrTestCase } from './client/src/types/api.js';
 
