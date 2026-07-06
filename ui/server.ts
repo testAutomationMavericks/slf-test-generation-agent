@@ -160,6 +160,11 @@ function saveConfig(c: UIConfig) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2));
 }
 
+// Auto-detect SSL: Neon and any URL with sslmode=require need it
+export function requiresSsl(url: string): boolean {
+  return /neon\.tech|sslmode=require/i.test(url) || process.env.DB_SSL === 'require';
+}
+
 let config = loadConfig();
 
 // Now config is loaded — safe to create KB and approval store
@@ -908,7 +913,7 @@ app.get('/api/test/db', async (_req, res) => {
 
   const steps: Array<{ label: string; ok: boolean; detail?: string }> = [];
   const { default: postgres } = await import('postgres');
-  const ssl = process.env.DB_SSL === 'require' ? ('require' as const) : false;
+  const ssl = requiresSsl(baseUrl) ? ('require' as const) : false;
   const opts = { ssl, max: 1, connect_timeout: 10, idle_timeout: 5 };
 
   // Step 1: host reachable — connect to the target db; distinguish network errors from auth/db errors

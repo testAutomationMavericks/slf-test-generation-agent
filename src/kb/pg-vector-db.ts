@@ -111,8 +111,9 @@ export class PgKnowledgeBase implements IKnowledgeBase {
   private async initSql(connectionUrl: string) {
     try {
       const { default: postgres } = await import('postgres')
+      const ssl = /neon\.tech|sslmode=require/i.test(connectionUrl) || process.env.DB_SSL === 'require'
       this.sql = postgres(connectionUrl, {
-        ssl: process.env.DB_SSL === 'require' ? 'require' : false,
+        ssl: ssl ? 'require' : false,
         max: 10,
         idle_timeout: 30,
         connect_timeout: 10,

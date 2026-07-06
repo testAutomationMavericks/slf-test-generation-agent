@@ -66,8 +66,9 @@ export class PgApprovalStore implements IApprovalStore {
     }
     try {
       const { default: postgres } = await import('postgres');
+      const ssl = /neon\.tech|sslmode=require/i.test(this.connectionUrl) || process.env.DB_SSL === 'require'
       this.sql = postgres(this.connectionUrl, {
-        ssl: process.env.DB_SSL === 'require' ? 'require' : false,
+        ssl: ssl ? 'require' : false,
         max: 5,
         idle_timeout: 30,
         connect_timeout: 10,

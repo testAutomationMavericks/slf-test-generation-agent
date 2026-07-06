@@ -104,12 +104,13 @@ function TestBtn({ label, onTest }: { label: string; onTest: () => Promise<{ ok:
   )
 }
 
-function DbTestBtn() {
+function DbTestBtn({ onSave }: { onSave?: () => Promise<void> }) {
   const [steps, setSteps] = useState<Array<{ label: string; ok: boolean; detail?: string }>>([])
   const [loading, setLoading] = useState(false)
   const run = async () => {
     setLoading(true); setSteps([])
     try {
+      if (onSave) await onSave()
       const res = await api.testDb()
       const s = res.steps ?? []
       setSteps(s.length > 0 ? s : [{ label: 'Connection', ok: res.ok, detail: res.error ?? (res.ok ? 'OK' : 'Unknown error') }])
@@ -206,7 +207,7 @@ export function ConfigPage({ onSaved }: Props) {
               </Field>
             </div>
             <div style={{ marginTop: 8 }}>
-              <DbTestBtn />
+              <DbTestBtn onSave={save} />
             </div>
             <div style={{ marginTop: 8, fontSize: 11, color: '#888' }}>
               Provide details from your DevOps team. EC2 connection is required for all KB features.
