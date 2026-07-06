@@ -81,7 +81,6 @@ export function ConsolePage({ state }: Props) {
         `Review and update test cases for ${state.issueDetail.key}. ` +
         `Check current Zephyr tests, identify gaps against the latest acceptance criteria, ` +
         `and generate an updated suite.`,
-        genOptions,
       )
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))

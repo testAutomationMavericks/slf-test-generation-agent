@@ -1412,8 +1412,12 @@ app.post('/api/generate', async (req, res) => {
         `Follow the structure in CLAUDE.md.`
       : 'Help me generate test cases.');
 
+  // Only apply the gen constraints override for auto-generation.
+  // Custom prompts (Edit / Update a specific test) should not be constrained.
+  const applyOverride = issueKey && !customPrompt;
+
   const prompt = issueKey
-    ? genOverride +
+    ? (applyOverride ? genOverride : '') +
       `IMPORTANT: Do NOT use any MCP tools, make any tool calls, or fetch any external data. ` +
       `Generate test cases directly from the context provided below.\n\n` +
       (contextBlock
