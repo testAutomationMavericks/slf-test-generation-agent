@@ -9,6 +9,9 @@ export function KBPage({ kbStats, onStatsChange }: Props) {
   const [ids, setIds] = useState<string[]>([])
   const [seedLog, setSeedLog] = useState<string[]>([])
   const [seeding, setSeeding] = useState(false)
+  const [importLog, setImportLog] = useState<string[]>([])
+  const [importing, setImporting] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
 
   useEffect(() => { loadList() }, [])
 
@@ -54,6 +57,38 @@ export function KBPage({ kbStats, onStatsChange }: Props) {
     onStatsChange()
   }
 
+  const handleImportZephyr = async () => {
+    setShowImportModal(false)
+    setImporting(true)
+    setImportLog(['Starting Zephyr import…'])
+    try {
+      const res = await fetch('/api/kb/import/zephyr', { method: 'POST' })
+      if (!res.body) return
+      const reader = res.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        lines.filter(l => l.startsWith('data: ')).forEach(l => {
+          try {
+            const ev = JSON.parse(l.slice(6))
+            setImportLog(prev => [...prev, ev.message])
+          } catch { /* ignore */ }
+        })
+      }
+    } catch (e) {
+      setImportLog(prev => [...prev, 'Error: ' + String(e)])
+    } finally {
+      setImporting(false)
+      await loadList()
+      onStatsChange()
+    }
+  }
+
   const SOURCE_COLORS: Record<string, string> = {
     generated: 'var(--accent)', jira: 'var(--amber)',
     confluence: 'var(--purple)', zephyr: 'var(--green)',
@@ -83,10 +118,27 @@ export function KBPage({ kbStats, onStatsChange }: Props) {
           <button className="btn btn-primary" onClick={handleSeed} disabled={seeding}>
             {seeding ? <span className="spinner" /> : '🌱'} Re-seed
           </button>
+          <button className="btn btn-secondary" onClick={() => setShowImportModal(true)} disabled={importing}>
+            {importing ? <span className="spinner" /> : '⬇'} Import from Zephyr
+          </button>
           <button className="btn btn-secondary" onClick={loadList}>↻ Refresh</button>
           <button className="btn btn-danger" onClick={handleClear}>🗑 Clear</button>
         </div>
       </div>
+
+      {/* Import log */}
+      {importLog.length > 0 && (
+        <div style={{
+          padding: '6px 12px', fontFamily: 'var(--mono)', fontSize: 10,
+          color: 'var(--text3)', maxHeight: 80, overflowY: 'auto',
+          borderBottom: '1px solid var(--border)', background: 'var(--bg)',
+          flexShrink: 0,
+        }}>
+          {importLog.map((l, i) => (
+            <div key={i} style={{ color: l.startsWith('✓') ? 'var(--green)' : l.startsWith('✗') || l.startsWith('Error') ? 'var(--red)' : 'var(--text3)' }}>{l}</div>
+          ))}
+        </div>
+      )}
 
       {/* Seed log */}
       {seedLog.length > 0 && (
@@ -127,6 +179,42 @@ export function KBPage({ kbStats, onStatsChange }: Props) {
           )
         })}
       </div>
+
+      {/* Zephyr import confirmation modal */}
+      {showImportModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div style={{
+            background: 'var(--bg2)', border: '1px solid var(--border)',
+            borderRadius: 10, padding: '28px 32px', maxWidth: 460, width: '90%',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+          }}>
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Import from Zephyr</div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.6, marginBottom: 16 }}>
+              This will fetch <strong>all test cases</strong> for the configured project from Zephyr Scale
+              and add them to the Knowledge Base.
+            </div>
+            <div style={{
+              background: 'var(--bg3)', border: '1px solid var(--amber)33',
+              borderRadius: 6, padding: '10px 14px', marginBottom: 20,
+              fontSize: 12, color: 'var(--amber)', lineHeight: 1.6,
+            }}>
+              <strong>Safe to run more than once</strong> — test cases already in the KB
+              (matched by Zephyr key) are automatically skipped. No duplicates will be created.
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setShowImportModal(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleImportZephyr}>
+                Import
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

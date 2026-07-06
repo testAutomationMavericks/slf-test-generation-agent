@@ -908,6 +908,27 @@ async function directZephyrTestCases(issueKey: string): Promise<ZephyrTestCase[]
   } catch { return []; }
 }
 
+async function directZephyrAllTestCases(projectKey: string): Promise<ZephyrTestCase[]> {
+  const base = config.zephyrBaseUrl.replace(/\/$/, '');
+  const all: ZephyrTestCase[] = [];
+  let startAt = 0;
+  const pageSize = 100;
+
+  while (true) {
+    const url = `${base}/testcases?projectKey=${projectKey}&maxResults=${pageSize}&startAt=${startAt}`;
+    const r = await fetch(url, {
+      headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
+    });
+    if (!r.ok) { console.warn(`[Zephyr] bulk fetch page startAt=${startAt}: ${r.status}`); break; }
+    const data = await r.json() as { values?: ZephyrTestCase[]; total?: number };
+    const values = data.values ?? [];
+    all.push(...values);
+    if (values.length < pageSize || all.length >= (data.total ?? 0)) break;
+    startAt += pageSize;
+  }
+  return all;
+}
+
 function mapZephyrPriority(priority: string): string {
   const p = priority.toLowerCase();
   if (p === 'critical' || p === 'high') return 'High';
@@ -1606,6 +1627,68 @@ app.post('/api/kb/seed', async (_req, res) => {
   }
 
   send('Seed complete ✓', true);
+  res.end();
+});
+
+// ─── Zephyr → KB bulk import ─────────────────────────────────────────────────
+// Streams SSE progress. Idempotent: existing zephyr:KEY entries are skipped.
+
+app.post('/api/kb/import/zephyr', async (_req, res) => {
+  const projectKey = config.jiraProjectKey;
+  if (!projectKey) { res.status(400).json({ error: 'No Jira project key configured' }); return; }
+  if (!config.zephyrApiToken) { res.status(400).json({ error: 'Zephyr API token not configured' }); return; }
+  if (!config.anthropicApiKey && !process.env.ANTHROPIC_API_KEY) {
+    res.status(400).json({ error: 'ANTHROPIC_API_KEY required to generate embeddings' }); return;
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const send = (message: string, done = false) =>
+    res.write(`data: ${JSON.stringify({ message, done })}\n\n`);
+
+  try {
+    send(`Fetching all Zephyr test cases for project ${projectKey}…`);
+    const testCases = await directZephyrAllTestCases(projectKey);
+    send(`Found ${testCases.length} test case(s) in Zephyr`);
+
+    // Idempotency: collect IDs already in KB so we skip them
+    const existingIds = new Set(await db.listIds());
+    const toImport = testCases.filter(tc => !existingIds.has(`zephyr:${tc.key}`));
+    const skippedCount = testCases.length - toImport.length;
+
+    if (skippedCount > 0) send(`Skipping ${skippedCount} already-imported test case(s)`);
+    if (toImport.length === 0) {
+      send('Nothing new to import — all Zephyr test cases are already in the KB', true);
+      res.end(); return;
+    }
+
+    send(`Importing ${toImport.length} new test case(s)…`);
+
+    let imported = 0, errors = 0;
+    for (const tc of toImport) {
+      try {
+        const doc = formatZephyrDocument(tc);
+        await db.addDocument(doc);
+        imported++;
+        if (imported % 10 === 0 || imported === toImport.length) {
+          send(`Progress: ${imported} / ${toImport.length}`);
+        }
+      } catch (e: any) {
+        errors++;
+        console.warn(`[KB import] failed for ${tc.key}:`, e);
+        send(`✗ ${tc.key}: ${e.message ?? String(e)}`);
+      }
+    }
+
+    send(
+      `✓ Import complete — ${imported} imported, ${skippedCount} skipped${errors ? `, ${errors} error(s)` : ''}`,
+      true,
+    );
+  } catch (e: any) {
+    send(`Error: ${e.message ?? String(e)}`, true);
+  }
   res.end();
 });
 
