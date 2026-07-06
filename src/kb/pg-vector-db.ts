@@ -9,7 +9,7 @@
  *   - DATABASE_URL env var (postgres connection string)
  *   - pgvector extension + kb_documents table (see src/kb/schema.sql)
  *
- * Drop-in replacement for LocalKnowledgeBase — same interface.
+ * Implements IKnowledgeBase.
  */
 
 import { KBDocument } from '../knowledge-base/types.js'

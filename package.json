@@ -25,7 +25,6 @@
     "ui:prod": "tsx ui/server.ts",
     "test:unit:watch": "npx tsx --test --watch tests/unit/*.test.ts",
     "test:unit:verbose": "npx tsx --test tests/unit/*.test.ts",
-    "kb:migrate": "tsx src/kb/migrate.ts",
     "kb:schema": "echo \"Apply src/kb/schema.sql to your PostgreSQL database\"",
     "kb": "node tma/scanner/manage.js"
   },

@@ -5,7 +5,7 @@
  *   - Mock Jira MCP server (no Atlassian account needed)
  *   - Mock Confluence MCP server
  *   - Mock Zephyr MCP server
- *   - Local file-based vector DB (no AWS needed)
+ *   - pgvector KB (requires DATABASE_URL + ANTHROPIC_API_KEY)
  *   - Real Claude API (requires ANTHROPIC_API_KEY)
  *
  * Usage:
@@ -22,14 +22,16 @@ import { getAllMCPTools } from '../src/mcp-utils.js';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as readline from 'readline';
-import { LocalKnowledgeBase, retrieveLocalContextForIssue } from '../src/local-kb/local-vector-db.js';
+import { PgKnowledgeBase } from '../src/kb/pg-vector-db.js';
+import { retrieveKBContext } from '../src/kb/retrieve-context.js';
 import { formatTestCaseDocument } from '../src/knowledge-base/bedrock-kb.js';
 import { logger } from '../src/logger.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const db = new LocalKnowledgeBase('./local-kb-data');
+const dbUrl = process.env.DATABASE_URL ?? '';
+const db = new PgKnowledgeBase(dbUrl || 'unconfigured', process.env.ANTHROPIC_API_KEY ?? '');
 
 const CLAUDE_MD = path.resolve(process.cwd(), 'CLAUDE.md');
 const basePrompt = fs.existsSync(CLAUDE_MD) ? fs.readFileSync(CLAUDE_MD, 'utf-8')
@@ -81,7 +83,7 @@ async function runAgent(
   let systemPrompt = basePrompt;
   if (issueKey) {
     try {
-      const kbContext = await retrieveLocalContextForIssue(
+      const kbContext = await retrieveKBContext(
         db, issueKey, issueKey.split('-')[0]
       );
       if (kbContext) {
@@ -139,9 +141,9 @@ async function runAgent(
   return '(Max iterations reached)';
 }
 
-// ─── KB Write-Back (local) ────────────────────────────────────────────────────
+// ─── KB Write-Back ────────────────────────────────────────────────────────────
 
-async function saveToLocalKB(
+async function saveToKB(
   content: string,
   issueKey: string,
   approvedBy: string
@@ -152,8 +154,8 @@ async function saveToLocalKB(
     projectKey: issueKey.split('-')[0],
   });
   await db.addDocument(doc);
-  const count = await db.count();
-  console.log(`\n✓ Saved to local KB. Total documents: ${count}`);
+  const stats = await db.getStats();
+  console.log(`\n✓ Saved to KB. Total documents: ${stats.total}`);
 }
 
 // ─── Demo Scenarios ───────────────────────────────────────────────────────────
@@ -183,7 +185,7 @@ async function runScenario(
   console.log(`\n✓ Output saved to ${filename}`);
 
   if (saveToKB && issueKey) {
-    await saveToLocalKB(result, issueKey, 'demo-user');
+    await saveToKB(result, issueKey, 'demo-user');
   }
 
   return result;
@@ -193,7 +195,7 @@ async function runInteractiveDemo(clients: DemoClients): Promise<void> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   console.log('\n' + '━'.repeat(65));
-  console.log('  Interactive Demo — Mock Jira · Confluence · Zephyr + Local KB');
+  console.log('  Interactive Demo — Mock Jira · Confluence · Zephyr + pgvector KB');
   console.log('━'.repeat(65));
   console.log('Available tickets: DEMO-1 (login), DEMO-2 (basket), DEMO-3 (discount), DEMO-4 (password reset)');
   console.log('\nTry:');
@@ -241,13 +243,12 @@ async function main() {
   const isInteractive = args.includes('--interactive');
   const ticketArg = args.includes('--ticket') ? args[args.indexOf('--ticket') + 1] : null;
 
-  // Verify local KB is seeded
-  const count = await db.count().catch(() => 0);
+  const { total: count } = await db.getStats().catch(() => ({ total: 0 }));
   if (count === 0) {
-    console.log('Local KB is empty. Run: npm run kb:local:seed\n');
+    console.log('KB is empty — import from Zephyr on the KB page to populate.\n');
     console.log('Continuing without KB context...\n');
   } else {
-    console.log(`Local KB ready: ${count} documents\n`);
+    console.log(`KB ready: ${count} documents\n`);
   }
 
   const clients = await startAllMocks();
@@ -295,10 +296,10 @@ async function main() {
     );
 
     // Demonstrate KB retrieval compounding
-    const kbCount = await db.count();
+    const { total: kbCount } = await db.getStats().catch(() => ({ total: 0 }));
     console.log(`\n${'═'.repeat(65)}`);
     console.log(`DEMO COMPLETE`);
-    console.log(`Local KB now contains ${kbCount} documents`);
+    console.log(`KB now contains ${kbCount} documents`);
     console.log(`Future queries will retrieve this context automatically.`);
     console.log(`\nSwap to real servers by updating .mcp.json — see README.md`);
     console.log('═'.repeat(65) + '\n');

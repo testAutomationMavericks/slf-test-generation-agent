@@ -1,9 +1,8 @@
 /**
  * src/kb/interface.ts
  *
- * Shared interface for all Knowledge Base backends.
- * LocalKnowledgeBase (Phase 1) and PgKnowledgeBase (Phase 2) both implement this.
- * Server code only ever uses IKnowledgeBase — swap backends with zero other changes.
+ * Knowledge Base interface implemented by PgKnowledgeBase.
+ * Server code uses IKnowledgeBase throughout.
  */
 
 import { KBDocument } from '../knowledge-base/types.js'
@@ -24,10 +23,9 @@ export interface RetrieveOptions {
 
 export interface KBStats {
   total: number
-  dataDir?: string       // local only
-  connectionUrl?: string // pg only
+  connectionUrl?: string
   lastUpdated?: string
-  backend: 'local' | 'pgvector'
+  backend: 'pgvector'
 }
 
 export interface IKnowledgeBase {

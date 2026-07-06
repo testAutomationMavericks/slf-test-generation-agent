@@ -1,6 +1,6 @@
 // ui/client/src/components/Header.tsx
 import type { Page } from '../App'
-import type { ServerStatus, KBBackend } from '../types/api'
+import type { ServerStatus } from '../types/api'
 
 interface Props {
   status: ServerStatus | null
@@ -159,16 +159,16 @@ export function Header({ status, page, onNav }: Props) {
           {mode === 'mock' ? 'MOCK' : 'LIVE'}
         </span>
 
-        {/* KB backend badge — LOCAL or PG */}
+        {/* KB backend badge — PG (green = connected, gray = not configured) */}
         <span style={{
           fontFamily: "'DM Mono', monospace",
           fontSize: 10, fontWeight: 600, letterSpacing: '.1em',
           textTransform: 'uppercase',
-          color: status?.kbBackend === 'pgvector' ? '#3d9970' : '#999',
-          border: `1px solid ${status?.kbBackend === 'pgvector' ? 'rgba(61,153,112,.4)' : '#555'}`,
+          color: connected ? '#3d9970' : '#999',
+          border: `1px solid ${connected ? 'rgba(61,153,112,.4)' : '#555'}`,
           padding: '3px 8px', marginRight: 10,
         }}>
-          {'KB:' + (status?.kbBackend === 'pgvector' ? 'PG' : 'LOCAL')}
+          KB:PG
         </span>
 
         {/* Provider badge — yellow */}

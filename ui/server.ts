@@ -23,18 +23,17 @@ import { spawn, spawnSync } from 'child_process';
 import Anthropic from '@anthropic-ai/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { LocalKnowledgeBase, retrieveLocalContextForIssue, type KBScope } from '../src/local-kb/local-vector-db.js';
 import { PgKnowledgeBase } from '../src/kb/pg-vector-db.js';
 import type { IKnowledgeBase } from '../src/kb/interface.js';
+import { retrieveKBContext, type KBScope } from '../src/kb/retrieve-context.js';
 import { formatTestCaseDocument, formatZephyrDocument } from '../src/knowledge-base/formatters.js';
 import { createApprovalStore } from '../src/approvals/approval-store.js';
 import type { JiraIssue, ZephyrTestCase } from './client/src/types/api.js';
 
-// ─── Voyage-3 Embeddings (Phase 1 scaling) ────────────────────────────────────
-// Falls back to deterministic embeddings if no API key configured
+// ─── Voyage-3 Embeddings ──────────────────────────────────────────────────────
 async function getEmbedding(text: string): Promise<number[]> {
   const key = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
-  if (!key) return []; // local-vector-db will use its own deterministic embed
+  if (!key) return [];
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/embeddings', {
@@ -71,19 +70,18 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─── KB Backend — EC2/pgvector is default; local JSON is fallback only ────────
+// ─── KB Backend — pgvector (EC2) required ─────────────────────────────────────
 function createKB(): IKnowledgeBase {
   const dbUrl = buildDbUrl(config.databaseUrl || process.env.DATABASE_URL, config.dbName || process.env.DB_NAME);
   const apiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
-  if (dbUrl && apiKey) {
+  if (!dbUrl) {
+    console.warn('  ⚠ DATABASE_URL not configured — KB features unavailable until EC2 is set up');
+  } else if (!apiKey) {
+    console.warn('  ⚠ ANTHROPIC_API_KEY missing — KB embeddings will fail');
+  } else {
     console.log('  KB backend: pgvector (EC2)');
-    return new PgKnowledgeBase(dbUrl, apiKey);
   }
-  if (dbUrl && !apiKey) {
-    console.warn('  ⚠ DATABASE_URL set but ANTHROPIC_API_KEY missing — falling back to local KB');
-  }
-  console.log('  KB backend: local JSON (fallback)');
-  return new LocalKnowledgeBase(path.join(ROOT, 'local-kb-data'));
+  return new PgKnowledgeBase(dbUrl || 'unconfigured', apiKey || '');
 }
 
 // db and approvalStore are initialised after config is loaded below
@@ -125,7 +123,6 @@ export interface UIConfig {
   localApiKey: string;       // optional — some local servers need one
   // ── General ───────────────────────────────────────────────────────────────
   autoSaveToKB: boolean;
-  kbBackend: 'local' | 'pgvector';
   databaseUrl: string;  // base URL without dbname, e.g. postgresql://user:pass@host:5432
   dbName: string;       // database name — appended to databaseUrl to form the full connection string
   kbScopeMode: 'project' | 'multi' | 'all';  // KB retrieval scope during generation
@@ -164,7 +161,6 @@ function loadConfig(): UIConfig {
     localModel: process.env.LOCAL_MODEL ?? 'llama3.2',
     localApiKey: process.env.LOCAL_MODEL_API_KEY ?? '',
     autoSaveToKB: false,
-    kbBackend: process.env.DATABASE_URL ? 'pgvector' : 'local',
     databaseUrl: process.env.DATABASE_URL ?? '',
     dbName: process.env.DB_NAME ?? '',
     kbScopeMode: 'project',
@@ -474,7 +470,7 @@ async function runViaAPI(
 
   const kbCtx = preloadedKbContext ?? await (async () => {
     if (!issueKey) return '';
-    try { return await retrieveLocalContextForIssue(db, issueKey, issueKey.split('-')[0], undefined, { mode: config.kbScopeMode ?? 'project', projects: config.kbScopeProjects }); }
+    try { return await retrieveKBContext(db, issueKey, issueKey.split('-')[0], undefined, { mode: config.kbScopeMode ?? 'project', projects: config.kbScopeProjects }); }
     catch { return ''; }
   })();
 
@@ -655,7 +651,7 @@ app.get('/api/status', async (_req, res) => {
   res.json({
     mcpConnected,
     mode: config.mode,
-    kbBackend: (config.databaseUrl || process.env.DATABASE_URL) ? 'pgvector' : 'local',
+    kbBackend: 'pgvector',
     aiProvider: config.aiProvider ?? 'claudecode',
     claudeMode: config.aiProvider ?? 'claudecode',
     model: config.aiProvider === 'openai' ? config.openaiModel
@@ -1479,7 +1475,7 @@ app.post('/api/generate', async (req, res) => {
   let kbContext = '';
   if (issueKey) {
     try {
-      const kbResults = await retrieveLocalContextForIssue(
+      const kbResults = await retrieveKBContext(
         db,
         issueKey,
         issueKey.split('-')[0],

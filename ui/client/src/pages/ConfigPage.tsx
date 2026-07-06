@@ -189,12 +189,12 @@ export function ConfigPage({ onSaved }: Props) {
               const hasDb = !!(cfg.databaseUrl ?? '').trim()
               return (
                 <div style={S.note(
-                  hasDb ? 'rgba(61,153,112,.3)' : 'rgba(100,80,160,.3)',
-                  hasDb ? 'rgba(61,153,112,.04)' : 'rgba(100,80,160,.04)',
+                  hasDb ? 'rgba(61,153,112,.3)' : 'rgba(240,172,58,.3)',
+                  hasDb ? 'rgba(61,153,112,.04)' : 'rgba(240,172,58,.04)',
                 )}>
                   {hasDb
                     ? '🐘 EC2 / pgvector — approved test cases will be written to your EC2 PostgreSQL instance and shared across the team.'
-                    : '📁 Local JSON (fallback) — no EC2 URL configured. Approved tests are stored in local-kb-data/index.json on this machine.'}
+                    : '⚠ EC2 URL not configured — KB features (import, retrieval, duplicate detection) will be unavailable until connected.'}
                 </div>
               )
             })()}
@@ -219,8 +219,7 @@ export function ConfigPage({ onSaved }: Props) {
               <DbTestBtn />
             </div>
             <div style={{ marginTop: 8, fontSize: 11, color: '#888' }}>
-              Provide details from your DevOps team. Leave blank to fall back to local storage.
-              Once connected, run <code style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>npm run kb:migrate</code> to copy existing local docs to EC2.
+              Provide details from your DevOps team. EC2 connection is required for all KB features.
             </div>
           </div>
 
@@ -414,18 +413,13 @@ export function ConfigPage({ onSaved }: Props) {
         <button className="btn btn-secondary" onClick={testConn} disabled={testing}>
           {testing ? <span className="spinner" /> : null} Test Connection
         </button>
-        <button className="btn btn-secondary" onClick={() => {
-          alert('Run in terminal:\nnpm run kb:migrate\n\nThis copies your local KB documents to EC2 pgvector with voyage-3 embeddings.')
-        }}>
-          ↑ Migrate Local → EC2
-        </button>
         {saved && (
           <span style={{ fontSize: 12, color: '#2a7a50', fontWeight: 600 }}>✓ Saved</span>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center', fontSize: 11, color: '#888' }}>
           <span>Jira/Zephyr: <strong style={{ color: '#2a7a50' }}>live</strong></span>
           <span>•</span>
-          <span>KB: <strong style={{ color: (cfg.databaseUrl ?? '').trim() ? '#2a7a50' : '#7a5fa0' }}>{(cfg.databaseUrl ?? '').trim() ? 'EC2' : 'local'}</strong></span>
+          <span>KB: <strong style={{ color: (cfg.databaseUrl ?? '').trim() ? '#2a7a50' : '#c87000' }}>{(cfg.databaseUrl ?? '').trim() ? 'EC2' : 'not configured'}</strong></span>
           <span>•</span>
           <span>AI: <strong style={{ color: '#111' }}>{provider}</strong></span>
         </div>

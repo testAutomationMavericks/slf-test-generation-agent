@@ -2,7 +2,7 @@
  * src/knowledge-base/types.ts
  *
  * Shared types for Knowledge Base documents.
- * Used by LocalKnowledgeBase (Phase 1) and PgKnowledgeBase (Phase 2).
+ * Used by PgKnowledgeBase.
  */
 
 export type KBDocumentSource = 'generated' | 'jira' | 'confluence' | 'zephyr';
