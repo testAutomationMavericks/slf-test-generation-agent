@@ -28,13 +28,6 @@ export function KBPage({ kbStats, onStatsChange }: Props) {
     try { setIds(await api.kbList()) } catch { /* ignore */ }
   }
 
-  const handleClear = async () => {
-    if (!confirm('Clear all KB documents?')) return
-    await api.kbClear()
-    setIds([])
-    onStatsChange()
-  }
-
   const handleImportZephyr = async () => {
     setShowImportModal(false)
     setImporting(true)
@@ -116,7 +109,6 @@ export function KBPage({ kbStats, onStatsChange }: Props) {
             {importing ? <span className="spinner" /> : '⬇'} Import from Zephyr
           </button>
           <button className="btn btn-secondary" onClick={loadList}>↻ Refresh</button>
-          <button className="btn btn-danger" onClick={handleClear}>🗑 Clear</button>
         </div>
       </div>
 
