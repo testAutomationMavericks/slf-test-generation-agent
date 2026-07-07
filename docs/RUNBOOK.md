@@ -1,8 +1,7 @@
-# TMA — Operational Runbook
+# Selfridges Test Curator — Operational Runbook
 
-This runbook covers initial setup, day-to-day operations, and troubleshooting for the
-TMA (Test Management Agent). It assumes you are running TMA locally or on a server
-with Node.js ≥ 20 installed.
+This runbook covers initial setup, day-to-day operations, and troubleshooting for
+Test Curator. It assumes you are running the app locally or on a server with Node.js ≥ 20.
 
 ---
 
@@ -28,11 +27,11 @@ with Node.js ≥ 20 installed.
 | Jira Cloud | Any tier | Atlassian API token required |
 | Zephyr Scale | Cloud | SmartBear API token required |
 | Confluence | Cloud | Same Atlassian token as Jira |
-| AI provider | Any one | Claude Code CLI **or** Anthropic API key |
+| AI provider | Any one | Claude Code CLI **or** Anthropic API key **or** OpenAI key |
 
-**Optional (for EC2 KB):**
+**Optional (for pgvector KB):**
 - PostgreSQL 16 + pgvector extension (see `docs/DEVOPS_SETUP.md`)
-- `ANTHROPIC_API_KEY` (required for voyage-3 vector embeddings)
+- `ANTHROPIC_API_KEY` (required for Voyage-3 vector embeddings; app falls back to local embedding without it)
 
 ---
 
@@ -55,7 +54,6 @@ Edit `.env` and fill in at minimum:
 
 ```env
 # Required
-ANTHROPIC_API_KEY=sk-ant-...         # For AI generation + voyage-3 embeddings
 JIRA_URL=https://your-company.atlassian.net
 JIRA_USERNAME=your.email@company.com
 JIRA_API_TOKEN=your-atlassian-token
@@ -63,20 +61,20 @@ CONFLUENCE_URL=https://your-company.atlassian.net/wiki
 CONFLUENCE_USERNAME=your.email@company.com
 CONFLUENCE_API_TOKEN=your-atlassian-token
 ZEPHYR_API_TOKEN=your-zephyr-token
+JIRA_PROJECT_KEY=QAP
 
 # Optional but recommended
-DEFAULT_JIRA_PROJECT=SLF             # Your Jira project key
-DATABASE_URL=postgresql://tma:changeme@localhost:5432/tma_kb  # If using EC2/Docker
+ANTHROPIC_API_KEY=sk-ant-...       # For Anthropic API provider + Voyage-3 embeddings
+DATABASE_URL=postgresql://tma:changeme@localhost:5432/tma_kb  # If using pgvector KB
 ```
 
 ### 3. (Optional) Start PostgreSQL via Docker
 
-If you are using the local Docker KB instead of a managed EC2 instance:
+If using the local Docker KB instead of a managed PostgreSQL instance:
 
 ```bash
 docker compose up -d
-# Waits ~10 seconds for healthy state, then:
-docker compose ps     # should show tma-kb-postgres as "healthy"
+docker compose ps     # tma-kb-postgres should show as "healthy"
 ```
 
 ### 4. Verify the setup in-browser
@@ -85,12 +83,7 @@ docker compose ps     # should show tma-kb-postgres as "healthy"
 npm run ui
 ```
 
-Navigate to `http://localhost:3000`, go to **Config**, and use the test buttons to verify
-each connection:
-- Jira ✓
-- Confluence ✓
-- Zephyr ✓
-- EC2 (if configured) ✓
+Navigate to `http://localhost:3000`, go to **Config**, and use the test buttons to verify each connection. The header chips (Jira, Confluence, Zephyr, Knowledge Base, AI) should all turn green when configured correctly.
 
 ---
 
@@ -102,14 +95,20 @@ each connection:
 npm run ui
 ```
 
-This starts both the Express server (port 3001) and the Vite dev server (port 3000) with
-hot-reload. The UI is at **http://localhost:3000**.
+Starts the Express server (port 3000) and Vite dev server with hot-reload.
+The UI is at **http://localhost:3000**.
 
 ### Production (server deployment)
 
 ```bash
 npm run ui:build      # Build React app once
 npm run ui:prod       # Start server only (serves built assets)
+```
+
+After any code changes in development, rebuild the client before deploying:
+
+```bash
+npm run ui:build
 ```
 
 ### Server only (headless / API usage)
@@ -127,54 +126,61 @@ npm run ui:server
 1. Open **http://localhost:3000**
 2. In the **Console** tab:
    - Select a Jira issue from the left sidebar
-   - (Optional) Type a custom prompt at the bottom to focus generation
-   - Click **Generate Tests**
-3. Wait for generation to complete (1–3 min for Claude Code, 30–90s for Anthropic API)
-4. The output appears in the main panel; existing Zephyr tests appear in the right panel
+   - Check the filter strip — set **Priority** (Critical / High / Medium / Low) and **Type** (Functional / Regression / Edge Case / Negative / Security) for this generation. Selections persist automatically.
+   - (Optional) Type a custom prompt at the bottom to focus generation. Custom prompts bypass the Priority/Type filters.
+   - Click **⚡ Generate Tests**
+3. Wait for generation (1–3 min for Claude Code, 30–90s for Anthropic API)
+4. Output appears in the main panel; existing Zephyr tests appear on the right
+
+**Updating a single test:** Click **✏ Edit** on a Zephyr test in the right panel to populate
+the prompt bar with that test's key, then click **Send**. Filters do not apply — only that
+one test is updated.
+
+**Clearing output:** Click **✕ Clear** to wipe the output panel and start fresh.
 
 ### Sending for approval
 
-1. Click **Review & Upload** to open the Review Modal
+1. Click **↑ Review & Upload to Zephyr** (yellow button, visible once output exists)
 2. Review and edit each test case (name, priority, type, steps)
-3. Untick any test cases you want to exclude
+3. Untick any test cases to exclude
 4. Set the Zephyr folder name (default: "Generated")
 5. Click **Send for Approval** → enter your name → confirm
 6. A shareable URL is copied to your clipboard — send it to your reviewer
 
 ### Uploading approved tests
 
-Once your reviewer approves:
-
 1. Go to the **Approvals** tab or open the Review Modal
 2. Wait for status to show **Approved** or **Partial** (refresh if needed)
 3. Click **Upload Approved**
 4. Tests are created in Zephyr, linked to the Jira issue, and saved to the KB
 5. A Jira comment is posted listing the new test keys
+6. If any uploaded test is similar to an existing KB entry, the comment includes a duplicate
+   warning — check it and retire the older Zephyr test if appropriate
 
 ### Viewing and managing approvals
 
-Go to the **Approvals** tab to see all approval requests:
-- 🔗 Open → opens the approval review page
-- 📋 Copy Link → copies URL to clipboard
-- ↑ Upload → triggers Zephyr upload (only available if approved/partial)
-- ✕ Delete → removes the approval request permanently
+Go to the **Approvals** tab:
+- **🔗 Open** → opens the approval review page
+- **📋 Copy Link** → copies URL to clipboard
+- **↑ Upload** → triggers Zephyr upload (only available when approved/partial)
+- **✕ Delete** → removes the approval request permanently
 
 ---
 
 ## Knowledge Base Operations
 
-### Seed the local KB (first time)
+### Import from Zephyr
 
-```bash
-# Via UI: KB tab → Re-seed button
-# Or via CLI:
-npm run kb:local:seed
-```
+Use the KB tab → **Import from Zephyr** button to bulk-import existing Zephyr test cases:
+- Skips any whose key already appears in a KB document (whether as `zephyr:QAP-T131` or `generated:QAP-T131:QAP-12`)
+- **Automatically removes stale KB entries** whose Zephyr test case has been deleted
 
-### Migrate local KB to EC2
+Run this regularly (after deleting tests in Zephyr, or after a sprint cleanup) to keep the KB in sync.
 
-Run this once when your EC2 / Docker PostgreSQL is ready. Re-embeds all local documents
-with Voyage-3 and runs a post-migration duplicate scan.
+### Migrate to pgvector
+
+Run this once when your PostgreSQL database is ready. Re-embeds existing data with Voyage-3 and
+runs a post-migration duplicate scan.
 
 ```bash
 npm run kb:migrate
@@ -182,7 +188,7 @@ npm run kb:migrate
 
 Requires `DATABASE_URL` and `ANTHROPIC_API_KEY` in `.env`.
 
-### Interactive KB Manager (EC2 mode)
+### Interactive KB Manager
 
 ```bash
 npm run kb
@@ -190,7 +196,7 @@ npm run kb
 
 | Option | What it does |
 |--------|-------------|
-| View KB stats | Counts total, active, outdated entries; shows feature/sprint breakdown |
+| View KB stats | Counts total, active, outdated entries |
 | Search KB entries | Full-text search by title, feature area, or Zephyr key |
 | View outdated / stale entries | Lists entries flagged as outdated or not updated in 90+ days |
 | View duplicate log | Shows recent duplicate detections and actions taken |
@@ -204,15 +210,32 @@ npm run kb
 ```bash
 # Via UI: KB tab → Clear button (with confirmation)
 # Via API:
-curl -X DELETE http://localhost:3001/api/kb/clear
+curl -X DELETE http://localhost:3000/api/kb/clear
 ```
 
 ---
 
 ## Configuration Reference
 
-All config is managed through **Config tab** in the UI or via `.env`. The UI writes to
+All config is managed through the **Config tab** or via `.env`. The UI writes to
 `ui-config.json` which takes priority over `.env`.
+
+### Generation Preferences
+
+Stored automatically via the Console filter strip. Saved to `ui-config.json` as:
+
+```json
+{
+  "genPriorities": ["Critical", "High"],
+  "genTypes": ["Functional", "Regression", "Edge Case", "Negative", "Security"]
+}
+```
+
+Can also be read/written via:
+```
+GET  /api/gen-options
+POST /api/gen-options  { "priorities": [...], "types": [...] }
+```
 
 ### AI Providers
 
@@ -231,10 +254,11 @@ All config is managed through **Config tab** in the UI or via `.env`. The UI wri
 | Setting | Config tab field | .env variable |
 |---------|-----------------|---------------|
 | Jira URL | Connection URL | `JIRA_URL` |
-| Jira token | API Token | `JIRA_API_TOKEN` |
+| Bearer token | Bearer Token | `JIRA_BEARER_TOKEN` |
 | Jira username | Username | `JIRA_USERNAME` |
-| Project key | Project Key | `DEFAULT_JIRA_PROJECT` |
-| Epic key | Epic Key (optional) | `JIRA_EPIC_KEY` |
+| Jira API token | API Token | `JIRA_API_TOKEN` |
+| Project key | Project Key | `JIRA_PROJECT_KEY` |
+| Epic key (optional) | Epic Key | `JIRA_EPIC_KEY` |
 | Confluence URL | Confluence URL | `CONFLUENCE_URL` |
 | Confluence token | Confluence Token | `CONFLUENCE_API_TOKEN` |
 
@@ -251,7 +275,7 @@ All config is managed through **Config tab** in the UI or via `.env`. The UI wri
 
 | Setting | Config tab field | .env variable |
 |---------|-----------------|---------------|
-| EC2 connection URL | EC2 Connection URL | `DATABASE_URL` |
+| DB connection URL | EC2 Connection URL | `DATABASE_URL` |
 | Database name | Database Name | `DB_NAME` |
 | Auto-delete threshold | — | `KB_AUTO_DELETE_THRESHOLD` (default: 0.97) |
 | Flag threshold | — | `KB_FLAG_THRESHOLD` (default: 0.90) |
@@ -260,9 +284,16 @@ All config is managed through **Config tab** in the UI or via `.env`. The UI wri
 
 ## Troubleshooting
 
-### "Claude Code binary not found"
+### Header chip stays red despite correct credentials
 
-The Claude Code CLI is not installed or not on PATH.
+The status endpoint runs live checks every 30 seconds. After saving config:
+1. Wait up to 30 seconds for the next poll, or refresh the page
+2. For **Knowledge Base**: the DB check times out after 3 seconds — if the connection is slow, it may show red even when the DB is reachable. Check the Config → Test DB button for a detailed 3-step result.
+3. For **Confluence**: the chip uses the same Jira token if a dedicated Confluence API token is not set — this is correct behaviour on Atlassian Cloud.
+
+---
+
+### "Claude Code binary not found"
 
 ```bash
 # Install:
@@ -270,101 +301,88 @@ npm install -g @anthropic-ai/claude-code
 
 # Verify:
 claude --version
-
-# If still not found, check PATH:
-which claude
 ```
 
-Alternatively, switch to **Anthropic API** in Config tab — no CLI needed.
+Alternatively, switch to **Anthropic API** in Config — no CLI needed.
 
 ---
 
-### "Database connection failed" / EC2 test step 1 fails
-
-The server cannot reach the PostgreSQL host.
+### "Database connection failed" / KB chip stays red
 
 1. Check `DATABASE_URL` is correct in Config tab
-2. For Docker: verify container is running — `docker compose ps`
-3. For EC2: verify security group allows port 5432 from your IP
-4. Run the 3-step test in Config → EC2 section to isolate which step fails:
-   - Step 1 fail → host unreachable (network / firewall issue)
-   - Step 2 fail → host OK but database does not exist or wrong credentials
+2. For Docker: `docker compose ps` — container should be healthy
+3. For EC2: security group must allow port 5432 from the app server
+4. Use Config → Test DB for a 3-step result:
+   - Step 1 fail → host unreachable (network/firewall)
+   - Step 2 fail → host OK but wrong credentials or DB does not exist
    - Step 3 fail → connected but schema not applied
-
-If you see "not connected" in server logs but DATABASE_URL is set, the app has fallen
-back to local JSON — approvals and KB still work, just without pgvector features.
 
 ---
 
 ### "Jira issues not loading" / sidebar empty
 
-1. Check Jira URL and token in Config → Test Jira
-2. If using Epic Key filter, verify the epic key exists in your project
-3. Check that `DEFAULT_JIRA_PROJECT` matches your actual Jira project key
-4. JQL used: `project = {key} [AND "Epic Link" = {epicKey}] ORDER BY updated DESC LIMIT 30`
+1. Config → Test Jira
+2. Verify `JIRA_PROJECT_KEY` matches your project
+3. If Epic Key is set, verify it exists in the project
+4. JQL: `project = {key} [AND "Epic Link" = {epicKey}] ORDER BY updated DESC LIMIT 30`
 
 ---
 
 ### "Zephyr test cases not loading"
 
-1. Check Zephyr API token in Config → Test Zephyr
-2. Verify `ZEPHYR_BASE_URL` — if on EU region use `https://eu.api.zephyrscale.smartbear.com/v2`
-3. Zephyr tests are matched by linked issue or label — if neither is set on the Zephyr test, it will not appear
-4. Max 500 tests returned per lookup
+1. Config → Test Zephyr
+2. Check `ZEPHYR_BASE_URL` — EU region needs `https://eu.api.zephyrscale.smartbear.com/v2`
+3. Tests must be linked to the Jira issue or labelled with the issue key to appear in the panel
 
 ---
 
-### Generation produces generic / low-quality output
+### Generation produces too many tests / wrong priorities
 
-In priority order:
-
-1. **Seed the KB** — go to KB tab → Re-seed. An empty KB means Claude has no examples of your team's test style
-2. **Enrich the Jira ticket** — add acceptance criteria, description, and component info
-3. **Add a Confluence page** for the feature and link it or mention the issue key in the page
-4. **Use a custom prompt** to focus Claude — e.g. "Generate edge cases only for the payment flow"
-5. **Switch to Claude Code or Sonnet** if using Haiku or a local model
+1. Check the filter strip — unselect the priorities/types you don't want
+2. Filters apply only to **⚡ Generate Tests**; they do not affect **↻ Update** or **✏ Edit**
+3. If Claude ignores the filters, check the server logs — the constraint block should appear
+   at the top of the prompt
 
 ---
 
-### Approval stuck in "Pending" — reviewer says they submitted
+### Update button generates a full suite instead of updating one test
 
-The approval page status does not auto-push to the Console. Manually refresh:
-
-- **Approvals tab** → Refresh button
-- **Review Modal** → close and re-open
-
-If still pending after refresh, check that the reviewer actually clicked **Submit Review**
-(not just toggling checkboxes — the button must be clicked).
+Use **✏ Edit** on the specific Zephyr test in the right panel (not the ↻ Update button).
+Edit populates the prompt bar with `Update test case QAP-Txxx:` and sends as a custom prompt,
+which bypasses filters and targets only that test.
 
 ---
 
-### Upload to Zephyr fails for some tests
+### Approval page shows error / "missing test cases"
 
-Partial failures are expected if Zephyr rejects a test case. The upload endpoint returns
-`{ uploadedCount, failedCount }` — check the browser console or server logs for the specific
-Zephyr error (usually a field validation failure).
+This can occur if the approval was created before a server migration. Delete the broken
+approval request and send for approval again from the Review Modal.
 
-Common causes:
-- Test case name exceeds Zephyr limits (trim it in the Review Modal)
-- Objective / description text too long (500 char limit for objective field)
-- Jira issue ID could not be resolved — verify the issue key is valid
+If it happens consistently, check server logs for `PgApprovalStore: data for "apr-xxx" was a string`
+— this indicates a PostgreSQL JSONB serialisation issue. The server logs the full data for diagnosis.
 
 ---
 
-### "PgApprovalStore: EC2 not reachable" warning in logs
+### "PgApprovalStore: EC2 not reachable" in logs
 
-This is informational, not an error. The approval store has automatically fallen back to
-`approvals.json`. All approvals will be saved locally and work normally.
+Informational only. The approval store has fallen back to `approvals.json`. All approvals
+work normally. When EC2 becomes available (on next server start with a valid connection),
+new approvals go to PostgreSQL.
 
-When EC2 becomes available (after the server restarts with a valid connection), new approvals
-go to PostgreSQL. Approvals already in `approvals.json` are not migrated automatically.
+---
+
+### Zephyr import re-imports tests that were already uploaded
+
+The importer checks whether the Zephyr key appears anywhere in a KB document ID — including
+`generated:QAP-T131:QAP-12` style IDs from approval uploads. If a test is still being
+re-imported, run the import again (the check uses fresh IDs from the DB each time).
 
 ---
 
 ### "Skipped N outdated KB entries" warning during generation
 
-Near-duplicate entries exist in the KB flagged as outdated. They are excluded from retrieval
-correctly, but you should review them:
+Near-duplicate entries exist in the KB. They are excluded from retrieval correctly but
+should be reviewed:
 
 ```bash
 npm run kb
@@ -380,45 +398,50 @@ npm run kb
 
 - **Review the duplicate log:** `npm run kb` → View duplicate log
   Check whether auto-deletions and flags look correct
-- **Purge stale features:** If a feature area has been retired, purge its KB entries:
-  `npm run kb` → Delete all for a feature
+- **Run Zephyr import** to sync deleted tests out of the KB
 
 ### Monthly
 
 - **Scan for new duplicates:** `npm run kb` → Run duplicate scan on full KB
-  New test patterns can create duplicates over time
 - **Review outdated entries:** `npm run kb` → View outdated / stale entries
-  Entries older than 90 days are surfaced automatically
+  (entries older than 90 days are surfaced automatically)
 
 ### Before a major sprint
 
-- **Re-seed KB** if your team has significantly changed its testing style
-- **Check Zephyr folder structure** — decide if tests should go into a sprint-specific folder
-  (set in Review Modal before upload)
-- **Verify EC2 connection** — Config tab → Test EC2 Connection
+- **Run Zephyr import** to pull in any new tests and clear deleted ones
+- **Check Zephyr folder structure** — set the folder name in the Review Modal before upload
+- **Verify DB connection** — Config tab → Test DB
 
 ### Rotating credentials
 
-Update credentials in Config tab → Save & Apply. No restart required — config hot-swaps.
+Update in Config tab → Save & Apply. No restart required — config hot-swaps immediately.
 
-For environment variable changes (e.g. rotating `JIRA_API_TOKEN` in a deployment), restart
-the server after updating the variable.
+For environment variable changes in a deployment, restart the server after updating.
+
+### Rebuilding the client (after code changes)
+
+```bash
+npm run ui:build
+```
+
+Outputs to `ui/public/`. Stale `.js` files from `tsc` in `ui/client/src/` will cause Vite
+to pick up compiled files instead of TypeScript sources — if the build fails with JSX errors,
+delete the `.js` files first:
+
+```bash
+find ui/client/src -name "*.js" -delete && npm run ui:build
+```
 
 ### Backing up the Knowledge Base
 
-**Local KB:**
-```bash
-cp local-kb-data/index.json local-kb-data/index.json.backup
-```
-
-**EC2 / pgvector KB:**
+**pgvector KB:**
 ```bash
 pg_dump "postgresql://tma:<password>@<host>:5432/tma_kb" \
   --format=custom \
   --file="tma_kb_$(date +%Y%m%d).dump"
 
 # Restore:
-pg_restore -d tma_kb tma_kb_20260702.dump
+pg_restore -d tma_kb tma_kb_20260707.dump
 ```
 
 **Approvals (local fallback):**

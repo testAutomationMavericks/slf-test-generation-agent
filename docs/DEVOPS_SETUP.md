@@ -1,15 +1,15 @@
-# TMA Knowledge Base — EC2 PostgreSQL Setup Guide
+# Selfridges Test Curator — EC2 PostgreSQL Setup Guide
 
 This document is for the DevOps team setting up the PostgreSQL + pgvector instance
-that backs the TMA (Test Management Agent) knowledge base.
+that backs the Test Curator knowledge base.
 
 ---
 
 ## What you are setting up
 
 A single PostgreSQL 16 database with the **pgvector** extension installed.
-The application stores AI-generated test cases as vector embeddings and uses
-cosine similarity search to find duplicates and retrieve relevant context.
+Test Curator stores AI-generated test cases as 1024-dimension vector embeddings (Voyage-3)
+and uses cosine similarity search to find duplicates and retrieve relevant context.
 
 No other services are required — just PostgreSQL + pgvector.
 
@@ -158,13 +158,16 @@ docker compose exec postgres psql -U tma -d tma_kb -c "SELECT * FROM kb_stats;"
 
 ## What to hand back to the development team
 
-Once the database is running, provide these values so they can be added to `.env`:
+Once the database is running, provide these values to be added to `.env` or
+the **Config tab → EC2 Connection URL** field:
 
 ```
 DATABASE_URL=postgresql://tma:<password>@<ec2-host-or-ip>:5432/tma_kb
 ```
 
-The app uses this single connection string — no separate DB_NAME or DB_PORT needed.
+The app uses this single connection string. The **Knowledge Base** chip in the header
+will turn green once the connection is verified. Use **Config → Test DB** for a 3-step
+connection diagnostic (host reachable → DB accessible → schema ready).
 
 ---
 
