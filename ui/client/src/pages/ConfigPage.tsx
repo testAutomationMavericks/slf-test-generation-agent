@@ -1,7 +1,7 @@
 // ui/client/src/pages/ConfigPage.tsx
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
-import type { UIConfig, AIProvider, AppMode, KBBackend } from '../types/api'
+import type { UIConfig, AIProvider } from '../types/api'
 
 interface Props { onSaved: () => void }
 
@@ -104,11 +104,44 @@ function TestBtn({ label, onTest }: { label: string; onTest: () => Promise<{ ok:
   )
 }
 
+function DbTestBtn({ onSave }: { onSave?: () => Promise<void> }) {
+  const [steps, setSteps] = useState<Array<{ label: string; ok: boolean; detail?: string }>>([])
+  const [loading, setLoading] = useState(false)
+  const run = async () => {
+    setLoading(true); setSteps([])
+    try {
+      if (onSave) await onSave()
+      const res = await api.testDb()
+      const s = res.steps ?? []
+      setSteps(s.length > 0 ? s : [{ label: 'Connection', ok: res.ok, detail: res.error ?? (res.ok ? 'OK' : 'Unknown error') }])
+    } catch (e: unknown) {
+      setSteps([{ label: 'Connection', ok: false, detail: String(e) }])
+    } finally { setLoading(false) }
+  }
+  return (
+    <div>
+      <button className="btn btn-secondary" onClick={run} disabled={loading} style={{ fontSize: 11, padding: '5px 12px' }}>
+        {loading ? <span className="spinner" /> : '⚡'} Test EC2 Connection
+      </button>
+      {steps.length > 0 && (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {steps.map((s, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 11, fontFamily: 'var(--mono)' }}>
+              <span style={{ color: s.ok ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>{s.ok ? '✓' : '✗'}</span>
+              <span style={{ color: '#555', flexShrink: 0 }}>{s.label}</span>
+              {s.detail && <span style={{ color: s.ok ? '#888' : 'var(--red)' }}>— {s.detail}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export function ConfigPage({ onSaved }: Props) {
   const [cfg, setCfg] = useState<Partial<UIConfig>>({})
   const [saved, setSaved] = useState(false)
-  const [testing, setTesting] = useState(false)
   const [ccStatus, setCcStatus] = useState<{ available: boolean; version?: string } | null>(null)
 
   useEffect(() => {
@@ -118,8 +151,6 @@ export function ConfigPage({ onSaved }: Props) {
 
   const set = (k: keyof UIConfig, v: string | boolean) => setCfg(p => ({ ...p, [k]: v }))
 
-  const mode = (cfg.mode ?? 'mock') as AppMode
-  const kbBackend = (cfg.kbBackend ?? 'local') as KBBackend
   const provider = (cfg.aiProvider ?? 'claudecode') as AIProvider
 
   const save = async () => {
@@ -129,83 +160,51 @@ export function ConfigPage({ onSaved }: Props) {
     onSaved()
   }
 
-  const testConn = async () => {
-    setTesting(true)
-    try { await save(); await api.connect(); alert('✓ Connected successfully!') }
-    catch (e: unknown) { alert('Failed: ' + (e instanceof Error ? e.message : String(e))) }
-    finally { setTesting(false) }
-  }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }}>
         <div style={{ maxWidth: 700 }}>
 
-          {/* ── Section 1: Data Source ─────────────────────────────────────── */}
-          <div style={S.section}>
-            <div style={S.label}>🔌 Data Source Mode</div>
-            <ToggleGroup
-              options={[
-                { id: 'mock' as AppMode, label: 'Mock (Local)' },
-                { id: 'live' as AppMode, label: 'Live (Atlassian)' },
-              ]}
-              value={mode}
-              onChange={v => set('mode', v)}
-              colors={{ live: '#3d9970' }}
-            />
-            <div style={{ marginTop: 12, ...S.note(
-              mode === 'mock' ? 'rgba(100,80,160,.3)' : 'rgba(61,153,112,.3)',
-              mode === 'mock' ? 'rgba(100,80,160,.04)' : 'rgba(61,153,112,.04)',
-            )}}>
-              {mode === 'mock'
-                ? '🟣 Mock mode — Jira, Confluence, and Zephyr use local demo data (DEMO-1 to DEMO-4). No credentials needed.'
-                : '🟢 Live mode — Connects to your real Atlassian and Zephyr Scale instances. Fill in credentials below.'}
-            </div>
-          </div>
-
-          <div style={S.divider} />
-
-          {/* ── Section 2: KB Backend ──────────────────────────────────────── */}
+          {/* ── Section 1: KB Backend ─────────────────────────────────────── */}
           <div style={S.section}>
             <div style={S.label}>🗄 Knowledge Base Storage</div>
-            <ToggleGroup
-              options={[
-                { id: 'local' as KBBackend, label: 'Phase 1 — Local JSON' },
-                { id: 'pgvector' as KBBackend, label: 'Phase 2 — pgvector' },
-              ]}
-              value={kbBackend}
-              onChange={v => set('kbBackend', v)}
-              colors={{ pgvector: '#3d9970' }}
-            />
-            <div style={{ marginTop: 12, ...S.note(
-              kbBackend === 'local' ? 'rgba(100,80,160,.3)' : 'rgba(61,153,112,.3)',
-              kbBackend === 'local' ? 'rgba(100,80,160,.04)' : 'rgba(61,153,112,.04)',
-            )}}>
-              {kbBackend === 'local'
-                ? '📁 Local JSON — stored in local-kb-data/index.json on this machine. Works offline, no setup needed. Best for single-user or demo use.'
-                : '🐘 pgvector — PostgreSQL + voyage-3 embeddings. Shared across the whole team, true semantic search, scales to millions of docs.'}
+            {(() => {
+              const hasDb = !!(cfg.databaseUrl ?? '').trim()
+              return (
+                <div style={S.note(
+                  hasDb ? 'rgba(61,153,112,.3)' : 'rgba(240,172,58,.3)',
+                  hasDb ? 'rgba(61,153,112,.04)' : 'rgba(240,172,58,.04)',
+                )}>
+                  {hasDb
+                    ? '🐘 EC2 / pgvector — approved test cases will be written to your EC2 PostgreSQL instance and shared across the team.'
+                    : '⚠ EC2 URL not configured — KB features (import, retrieval, duplicate detection) will be unavailable until connected.'}
+                </div>
+              )
+            })()}
+            <div style={S.row}>
+              <Field label="EC2 Connection URL (no database name)">
+                <TextInput
+                  value={String(cfg.databaseUrl ?? '')}
+                  onChange={v => set('databaseUrl', v)}
+                  placeholder="postgresql://user:password@your-ec2-host:5432"
+                  type="password"
+                />
+              </Field>
+              <Field label="Database Name">
+                <TextInput
+                  value={String(cfg.dbName ?? '')}
+                  onChange={v => set('dbName', v)}
+                  placeholder="e.g. testgen_kb"
+                />
+              </Field>
             </div>
-
-            {kbBackend === 'pgvector' && (
-              <div style={{ marginTop: 12 }}>
-                <div style={S.note('rgba(200,148,26,.35)', 'rgba(200,148,26,.04)')}>
-                  <strong>Requires:</strong> PostgreSQL with pgvector extension + Anthropic API key for voyage-3 embeddings.{' '}
-                  Run <code style={{ fontFamily: 'var(--mono)', background: '#f0efe9', padding: '1px 5px', fontSize: 12 }}>npm install postgres</code>{' '}
-                  and apply <code style={{ fontFamily: 'var(--mono)', background: '#f0efe9', padding: '1px 5px', fontSize: 12 }}>src/kb/schema.sql</code> to your database first.
-                </div>
-                <Field label="Database URL">
-                  <TextInput
-                    value={String(cfg.databaseUrl ?? '')}
-                    onChange={v => set('databaseUrl', v)}
-                    placeholder="postgresql://user:password@host:5432/dbname"
-                    type="password"
-                  />
-                </Field>
-                <div style={{ marginTop: 8, fontSize: 11, color: '#888' }}>
-                  After switching, run <code style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>npm run kb:migrate</code> to copy existing documents from local JSON to pgvector.
-                </div>
-              </div>
-            )}
+            <div style={{ marginTop: 8 }}>
+              <DbTestBtn onSave={save} />
+            </div>
+            <div style={{ marginTop: 8, fontSize: 11, color: '#888' }}>
+              Provide details from your DevOps team. EC2 connection is required for all KB features.
+            </div>
           </div>
 
           <div style={S.divider} />
@@ -307,11 +306,9 @@ export function ConfigPage({ onSaved }: Props) {
             )}
           </div>
 
-          {/* ── Section 4: Live Atlassian credentials ────────────────────── */}
-          {mode === 'live' && (
-            <>
-              <div style={S.divider} />
-              <div style={S.section}>
+          {/* ── Section 4: Atlassian credentials ──────────────────────────── */}
+          <div style={S.divider} />
+          <div style={S.section}>
                 <div style={S.label}>🟡 Jira + Confluence</div>
 
                 <div style={S.note('rgba(100,80,160,.3)', 'rgba(100,80,160,.04)')}>
@@ -386,9 +383,7 @@ export function ConfigPage({ onSaved }: Props) {
                 <div style={{ marginTop: 4 }}>
                   <TestBtn label="Test Zephyr" onTest={() => api.testZephyr()} />
                 </div>
-              </div>
-            </>
-          )}
+          </div>
 
         </div>
       </div>
@@ -399,23 +394,13 @@ export function ConfigPage({ onSaved }: Props) {
         background: '#f4f3f0', display: 'flex', gap: 10, alignItems: 'center',
       }}>
         <button className="btn btn-primary" onClick={save}>Save & Apply</button>
-        <button className="btn btn-secondary" onClick={testConn} disabled={testing}>
-          {testing ? <span className="spinner" /> : null} Test Connection
-        </button>
-        {kbBackend === 'pgvector' && (
-          <button className="btn btn-secondary" onClick={() => {
-            alert('Run in terminal:\nnpm run kb:migrate\n\nThis copies your local KB documents to pgvector with voyage-3 embeddings.')
-          }}>
-            ↑ Migrate Local → pgvector
-          </button>
-        )}
         {saved && (
           <span style={{ fontSize: 12, color: '#2a7a50', fontWeight: 600 }}>✓ Saved</span>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center', fontSize: 11, color: '#888' }}>
-          <span>Jira/Zephyr: <strong style={{ color: mode === 'live' ? '#2a7a50' : '#7a5fa0' }}>{mode}</strong></span>
+          <span>Jira/Zephyr: <strong style={{ color: '#2a7a50' }}>live</strong></span>
           <span>•</span>
-          <span>KB: <strong style={{ color: kbBackend === 'pgvector' ? '#2a7a50' : '#7a5fa0' }}>{kbBackend}</strong></span>
+          <span>KB: <strong style={{ color: (cfg.databaseUrl ?? '').trim() ? '#2a7a50' : '#c87000' }}>{(cfg.databaseUrl ?? '').trim() ? 'EC2' : 'not configured'}</strong></span>
           <span>•</span>
           <span>AI: <strong style={{ color: '#111' }}>{provider}</strong></span>
         </div>

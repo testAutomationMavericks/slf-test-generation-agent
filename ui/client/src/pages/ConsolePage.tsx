@@ -1,9 +1,12 @@
 // ui/client/src/pages/ConsolePage.tsx
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import type { useAppState } from '../hooks/useAppState'
 import { ReviewModal } from '../components/ReviewModal'
 import { api } from '../lib/api'
 import type { ZephyrTestCase } from '../types/api'
+
+const ALL_PRIORITIES = ['Critical', 'High', 'Medium', 'Low']
+const ALL_TYPES      = ['Functional', 'Regression', 'Edge Case', 'Negative', 'Security']
 
 type State = ReturnType<typeof useAppState>
 
@@ -15,6 +18,35 @@ export function ConsolePage({ state }: Props) {
   const [viewTest, setViewTest] = useState<ZephyrTestCase | null>(null)
   const [error, setError] = useState('')
   const outputRef = useRef<HTMLDivElement>(null)
+
+  // Generation filter options — loaded from server, persisted on change
+  const [priorities, setPriorities] = useState<string[]>(['Critical', 'High'])
+  const [types, setTypes]           = useState<string[]>(ALL_TYPES)
+
+  useEffect(() => {
+    api.getGenOptions().then(o => {
+      setPriorities(o.priorities)
+      setTypes(o.types)
+    }).catch(() => {})
+  }, [])
+
+  const saveGenOptions = useCallback((p: string[], t: string[]) => {
+    api.setGenOptions({ priorities: p, types: t }).catch(() => {})
+  }, [])
+
+  const togglePriority = (p: string) => {
+    const next = priorities.includes(p) ? priorities.filter(x => x !== p) : [...priorities, p]
+    if (next.length === 0) return  // keep at least one
+    setPriorities(next)
+    saveGenOptions(next, types)
+  }
+
+  const toggleType = (t: string) => {
+    const next = types.includes(t) ? types.filter(x => x !== t) : [...types, t]
+    if (next.length === 0) return
+    setTypes(next)
+    saveGenOptions(priorities, next)
+  }
 
   // Auto-scroll output
   useEffect(() => {
@@ -29,10 +61,12 @@ export function ConsolePage({ state }: Props) {
     ]
   })()
 
+  const genOptions = { priorities, types }
+
   const handleGenerate = async () => {
     setError('')
     try {
-      await state.generate(customPrompt || undefined)
+      await state.generate(customPrompt || undefined, genOptions)
       setCustomPrompt('')
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
@@ -46,7 +80,7 @@ export function ConsolePage({ state }: Props) {
       await state.generate(
         `Review and update test cases for ${state.issueDetail.key}. ` +
         `Check current Zephyr tests, identify gaps against the latest acceptance criteria, ` +
-        `and generate an updated suite.`
+        `and generate an updated suite.`,
       )
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
@@ -72,7 +106,7 @@ export function ConsolePage({ state }: Props) {
           <div style={{
             padding: '12px 18px', borderBottom: '1px solid var(--border)',
             background: 'var(--bg2)', flexShrink: 0,
-            minHeight: 72, maxHeight: 160, overflowY: 'auto',
+            minHeight: 72, maxHeight: 320, overflowY: 'auto',
           }}>
             {noIssue ? (
               <div style={{ fontSize: 12, color: 'var(--text3)', fontStyle: 'italic', paddingTop: 8 }}>
@@ -80,7 +114,7 @@ export function ConsolePage({ state }: Props) {
               </div>
             ) : (
               <>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--accent)', marginBottom: 3 }}>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 700, color: '#8a6400', marginBottom: 3 }}>
                   {state.issueDetail!.key}
                 </div>
                 <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8, lineHeight: 1.3 }}>
@@ -91,43 +125,14 @@ export function ConsolePage({ state }: Props) {
                     fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text2)',
                     lineHeight: 1.65, whiteSpace: 'pre-wrap',
                     background: 'var(--bg3)', padding: '7px 10px', borderRadius: 5,
-                    border: '1px solid var(--border)', maxHeight: 70, overflowY: 'auto',
+                    border: '1px solid var(--border)', maxHeight: 220, overflowY: 'auto',
                   }}>
                     {typeof state.issueDetail!.description === 'string'
-                      ? state.issueDetail!.description.slice(0, 600)
-                      : JSON.stringify(state.issueDetail!.description).slice(0, 600)}
+                      ? state.issueDetail!.description.slice(0, 1200)
+                      : JSON.stringify(state.issueDetail!.description).slice(0, 1200)}
                   </div>
                 )}
               </>
-            )}
-          </div>
-
-          {/* Engine banner */}
-          <div style={{
-            padding: '6px 14px', borderBottom: '1px solid var(--border)',
-            background: 'var(--bg3)', display: 'flex', alignItems: 'center', gap: 10,
-            flexShrink: 0, fontSize: 11, color: 'var(--text3)',
-          }}>
-            <span>Engine:</span>
-            {state.engine && (
-              <span style={{
-                fontFamily: 'var(--mono)', fontSize: 10,
-                color: 'var(--cyan)', background: 'rgba(34,212,238,.06)',
-                padding: '1px 7px', borderRadius: 3,
-                border: '1px solid rgba(34,212,238,.15)',
-              }}>
-                {state.engine}
-              </span>
-            )}
-            {state.kbDocsFound > 0 && (
-              <span style={{
-                fontFamily: 'var(--mono)', fontSize: 10, marginLeft: 'auto',
-                color: 'var(--green)', background: 'rgba(39,201,143,.06)',
-                padding: '1px 7px', borderRadius: 3,
-                border: '1px solid rgba(39,201,143,.2)',
-              }}>
-                📚 KB: {state.kbDocsFound} docs
-              </span>
             )}
           </div>
 
@@ -144,13 +149,94 @@ export function ConsolePage({ state }: Props) {
               ↻ Update
             </button>
             {state.output && (
-              <button className="btn btn-success" onClick={() => {
+              <button className="btn btn-secondary" onClick={state.clearOutput} disabled={state.generating}>
+                ✕ Clear
+              </button>
+            )}
+            {state.output && (
+              <button className="btn btn-primary" onClick={() => {
                 state.openReview()
                 setShowReview(true)
               }} style={{ marginLeft: 'auto' }}>
                 ↑ Review & Upload to Zephyr
               </button>
             )}
+          </div>
+
+          {/* Generation filter strip */}
+          <div style={{
+            padding: '6px 14px', borderBottom: '1px solid var(--border)',
+            background: 'var(--bg3)', display: 'flex', alignItems: 'center',
+            gap: 16, flexShrink: 0, flexWrap: 'wrap',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text3)', whiteSpace: 'nowrap' }}>Priority</span>
+              {ALL_PRIORITIES.map(p => {
+                const on = priorities.includes(p)
+                const onColor   = p === 'Critical' ? '#c0392b' : p === 'High' ? '#8a6400' : p === 'Medium' ? '#2e7d55' : '#4a5fa8'
+                const onBg      = p === 'Critical' ? 'rgba(192,57,43,.13)' : p === 'High' ? 'rgba(138,100,0,.13)' : p === 'Medium' ? 'rgba(46,125,85,.12)' : 'rgba(74,95,168,.12)'
+                const onBorder  = p === 'Critical' ? 'rgba(192,57,43,.45)' : p === 'High' ? 'rgba(138,100,0,.45)' : p === 'Medium' ? 'rgba(46,125,85,.4)' : 'rgba(74,95,168,.4)'
+                return (
+                  <button key={p} onClick={() => togglePriority(p)} style={{
+                    fontFamily: 'var(--mono)', fontSize: 9,
+                    fontWeight: on ? 700 : 400,
+                    letterSpacing: '.08em', textTransform: 'uppercase',
+                    padding: '3px 8px', border: 'none', borderRadius: 3, cursor: 'pointer',
+                    background: on ? onBg : 'transparent',
+                    color: on ? onColor : '#bbb',
+                    outline: on ? `1px solid ${onBorder}` : '1px solid #ddd',
+                    transition: 'all .15s',
+                  }}>
+                    {p}
+                  </button>
+                )
+              })}
+            </div>
+            <div style={{ width: 1, height: 18, background: 'var(--border)', flexShrink: 0 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text3)', whiteSpace: 'nowrap' }}>Type</span>
+              {ALL_TYPES.map(t => {
+                const on = types.includes(t)
+                return (
+                  <button key={t} onClick={() => toggleType(t)} style={{
+                    fontFamily: 'var(--mono)', fontSize: 9,
+                    fontWeight: on ? 700 : 400,
+                    letterSpacing: '.08em', textTransform: 'uppercase',
+                    padding: '3px 8px', border: 'none', borderRadius: 3, cursor: 'pointer',
+                    background: on ? 'rgba(14,120,140,.12)' : 'transparent',
+                    color: on ? '#0e787c' : '#bbb',
+                    outline: on ? '1px solid rgba(14,120,140,.4)' : '1px solid #ddd',
+                    transition: 'all .15s',
+                  }}>
+                    {t}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Engine + KB badge pushed to the right */}
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {state.kbDocsFound > 0 && (
+                <span style={{
+                  fontFamily: 'var(--mono)', fontSize: 9, fontWeight: 600,
+                  color: 'var(--green)', background: 'rgba(39,201,143,.06)',
+                  padding: '3px 8px', borderRadius: 3,
+                  border: '1px solid rgba(39,201,143,.2)',
+                }}>
+                  KB: {state.kbDocsFound}
+                </span>
+              )}
+              {state.engine && (
+                <span style={{
+                  fontFamily: 'var(--mono)', fontSize: 9, fontWeight: 600,
+                  color: 'var(--cyan)', background: 'rgba(34,212,238,.06)',
+                  padding: '3px 8px', borderRadius: 3,
+                  border: '1px solid rgba(34,212,238,.15)',
+                }}>
+                  {state.engine}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Generating indicator */}

@@ -8,7 +8,6 @@ test-cases-*.md
 ui-config.json
 .mcp.json
 approvals.json
-local-kb-data/
 ui/**/*.js
 ui/**/*.js.map
 ui/**/*.d.ts

@@ -1,51 +1,40 @@
 {
-  "apr-1780348042960-5i1o": {
-    "id": "apr-1780348042960-5i1o",
-    "issueKey": "DEMO-1",
-    "issueSummary": "User Login with Email and Password",
-    "projectKey": "DEMO",
+  "apr-1782415237300-szn6": {
+    "id": "apr-1782415237300-szn6",
+    "issueKey": "QAP-14",
+    "jiraIssueId": "10207",
+    "issueSummary": "Filter option should have categories listed to select",
+    "projectKey": "QAP",
     "folder": "Generated",
-    "requestedBy": "abc",
-    "requestedAt": "2026-06-01T21:07:22.960Z",
+    "requestedBy": "Xyz",
+    "requestedAt": "2026-06-25T19:20:37.300Z",
     "testCases": [
       {
         "id": 0,
-        "name": "[TC-004] Remember Me — Session Persists Across Browser Restart",
+        "name": "[TC-004] Deselecting a Category Restores the Broader Result Set",
         "type": "Functional",
         "priority": "High",
-        "precondition": "Registered user account exists: `test@demo.com` / `Test1234!`\nBrowser has no existing session cookie for the application",
+        "precondition": "User has already selected one or more categories in the filter",
         "steps": [
           {
-            "description": "Navigate to `/login`",
-            "expectedResult": "Login page is displayed"
+            "description": "With \"Bags\" selected, note the filtered product count",
+            "expectedResult": "Baseline filtered count recorded"
           },
           {
-            "description": "Enter valid email and password",
-            "expectedResult": "Fields populated"
+            "description": "Click \"Bags\" again to deselect it",
+            "expectedResult": "\"Bags\" is no longer marked as selected"
           },
           {
-            "description": "Check the \"Remember me\" checkbox",
-            "expectedResult": "Checkbox is selected"
+            "description": "Observe the product listing",
+            "expectedResult": "Results expand back to the state before \"Bags\" was selected"
           },
           {
-            "description": "Click \"Sign In\"",
-            "expectedResult": "User is redirected to `/dashboard`; a persistent auth token is set in the browser (cookie `max-age` ≥ 30 days)"
-          },
-          {
-            "description": "Close the browser completely and reopen it",
-            "expectedResult": "Browser starts a fresh session"
-          },
-          {
-            "description": "Navigate to `/dashboard`",
-            "expectedResult": "User is still authenticated; redirected to `/dashboard` without being prompted to log in again"
-          },
-          {
-            "description": "Inspect the auth token expiry",
-            "expectedResult": "Token expiry is `createdAt + 30 days` (±1 minute tolerance)"
+            "description": "If all categories are now deselected, verify the full catalogue is shown",
+            "expectedResult": "Unfiltered listing is restored"
           }
         ],
-        "outcome": "User remains authenticated after a full browser restart; the auth token has a 30-day TTL and is not a session-only cookie. ---",
-        "content": "## Test Case: [TC-004] Remember Me — Session Persists Across Browser Restart\n\n**Type:** Functional\n**Priority:** High\n\n### Preconditions\n- Registered user account exists: `test@demo.com` / `Test1234!`\n- Browser has no existing session cookie for the application\n\n### Test Steps\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Navigate to `/login` | Login page is displayed |\n| 2 | Enter valid email and password | Fields populated |\n| 3 | Check the \"Remember me\" checkbox | Checkbox is selected |\n| 4 | Click \"Sign In\" | User is redirected to `/dashboard`; a persistent auth token is set in the browser (cookie `max-age` ≥ 30 days) |\n| 5 | Close the browser completely and reopen it | Browser starts a fresh session |\n| 6 | Navigate to `/dashboard` | User is still authenticated; redirected to `/dashboard` without being prompted to log in again |\n| 7 | Inspect the auth token expiry | Token expiry is `createdAt + 30 days` (±1 minute tolerance) |\n\n### Expected Outcome\nUser remains authenticated after a full browser restart; the auth token has a 30-day TTL and is not a session-only cookie.\n\n---",
+        "outcome": "Deselecting a category immediately removes that filter and updates the product listing accordingly. ---",
+        "content": "## Test Case: [TC-004] Deselecting a Category Restores the Broader Result Set\n\n**Type:** Functional\n**Priority:** High\n\n### Preconditions\n- User has already selected one or more categories in the filter\n\n### Test Steps\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | With \"Bags\" selected, note the filtered product count | Baseline filtered count recorded |\n| 2 | Click \"Bags\" again to deselect it | \"Bags\" is no longer marked as selected |\n| 3 | Observe the product listing | Results expand back to the state before \"Bags\" was selected |\n| 4 | If all categories are now deselected, verify the full catalogue is shown | Unfiltered listing is restored |\n\n### Expected Outcome\nDeselecting a category immediately removes that filter and updates the product listing accordingly.\n\n---",
         "selected": true,
         "uploaded": false,
         "uploadError": null,
@@ -55,34 +44,34 @@
       },
       {
         "id": 1,
-        "name": "[TC-005] Remember Me — Session Does NOT Persist Without Checkbox",
-        "type": "Functional",
-        "priority": "Medium",
-        "precondition": "Registered user account: `test@demo.com` / `Test1234!`\nBrowser has no existing session cookie",
+        "name": "[TC-005] Selecting a Category With Zero Products Shows an Empty State",
+        "type": "Negative",
+        "priority": "High",
+        "precondition": "A category exists in the filter list that currently has no associated products (e.g. due to stock or seasonal unavailability)\nOR the tester can simulate this by combining mutually exclusive filter criteria",
         "steps": [
           {
-            "description": "Navigate to `/login`",
-            "expectedResult": "Login page displayed"
+            "description": "Select a category known to have no available products",
+            "expectedResult": "Category is marked as selected"
           },
           {
-            "description": "Enter valid email and password; leave \"Remember me\" **unchecked**",
-            "expectedResult": "Fields populated, checkbox unchecked"
+            "description": "Observe the product listing area",
+            "expectedResult": "No product cards are rendered"
           },
           {
-            "description": "Click \"Sign In\"",
-            "expectedResult": "User redirected to `/dashboard`; auth token is a session cookie (no `max-age` / `expires` attribute)"
+            "description": "Verify an empty-state message is displayed",
+            "expectedResult": "A user-friendly message appears (e.g. \"No products found in this category\")"
           },
           {
-            "description": "Close the browser completely and reopen it",
-            "expectedResult": "Browser starts a fresh session"
+            "description": "Verify no error or broken layout occurs",
+            "expectedResult": "Page remains stable; no JS errors in console"
           },
           {
-            "description": "Navigate to `/dashboard`",
-            "expectedResult": "User is **not** authenticated; redirected to `/login`"
+            "description": "Deselect the category",
+            "expectedResult": "Products from other categories return"
           }
         ],
-        "outcome": "Without \"Remember me\", the auth token is a session cookie that expires on browser close. ---",
-        "content": "## Test Case: [TC-005] Remember Me — Session Does NOT Persist Without Checkbox\n\n**Type:** Functional\n**Priority:** Medium\n\n### Preconditions\n- Registered user account: `test@demo.com` / `Test1234!`\n- Browser has no existing session cookie\n\n### Test Steps\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Navigate to `/login` | Login page displayed |\n| 2 | Enter valid email and password; leave \"Remember me\" **unchecked** | Fields populated, checkbox unchecked |\n| 3 | Click \"Sign In\" | User redirected to `/dashboard`; auth token is a session cookie (no `max-age` / `expires` attribute) |\n| 4 | Close the browser completely and reopen it | Browser starts a fresh session |\n| 5 | Navigate to `/dashboard` | User is **not** authenticated; redirected to `/login` |\n\n### Expected Outcome\nWithout \"Remember me\", the auth token is a session cookie that expires on browser close.\n\n---",
+        "outcome": "When a selected category returns no results, a clear empty-state message is displayed and the page remains stable. ---",
+        "content": "## Test Case: [TC-005] Selecting a Category With Zero Products Shows an Empty State\n\n**Type:** Negative\n**Priority:** High\n\n### Preconditions\n- A category exists in the filter list that currently has no associated products (e.g. due to stock or seasonal unavailability)\n- OR the tester can simulate this by combining mutually exclusive filter criteria\n\n### Test Steps\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Select a category known to have no available products | Category is marked as selected |\n| 2 | Observe the product listing area | No product cards are rendered |\n| 3 | Verify an empty-state message is displayed | A user-friendly message appears (e.g. \"No products found in this category\") |\n| 4 | Verify no error or broken layout occurs | Page remains stable; no JS errors in console |\n| 5 | Deselect the category | Products from other categories return |\n\n### Expected Outcome\nWhen a selected category returns no results, a clear empty-state message is displayed and the page remains stable.\n\n---",
         "selected": true,
         "uploaded": false,
         "uploadError": null,
@@ -92,205 +81,102 @@
       },
       {
         "id": 2,
-        "name": "[TC-006] Login with Non-Existent Email",
-        "type": "Negative",
-        "priority": "High",
-        "precondition": "No account registered under `notregistered@demo.com`",
-        "steps": [
-          {
-            "description": "Navigate to `/login`",
-            "expectedResult": "Login page displayed"
-          },
-          {
-            "description": "Enter `notregistered@demo.com` in the email field",
-            "expectedResult": "Field populated"
-          },
-          {
-            "description": "Enter any password (e.g. `AnyPass1!`)",
-            "expectedResult": "Field populated"
-          },
-          {
-            "description": "Click \"Sign In\"",
-            "expectedResult": "Error message **\"Invalid email or password\"** is displayed; user remains on `/login`"
-          },
-          {
-            "description": "Verify response time",
-            "expectedResult": "Response arrives in the same time window as a failed-password response (timing must not reveal whether the email exists)"
-          }
-        ],
-        "outcome": "The application returns the same generic error for a non-existent email as for a wrong password, preventing user enumeration. Response timing does not leak existence of the account. ---",
-        "content": "## Test Case: [TC-006] Login with Non-Existent Email\n\n**Type:** Negative\n**Priority:** High\n\n### Preconditions\n- No account registered under `notregistered@demo.com`\n\n### Test Steps\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Navigate to `/login` | Login page displayed |\n| 2 | Enter `notregistered@demo.com` in the email field | Field populated |\n| 3 | Enter any password (e.g. `AnyPass1!`) | Field populated |\n| 4 | Click \"Sign In\" | Error message **\"Invalid email or password\"** is displayed; user remains on `/login` |\n| 5 | Verify response time | Response arrives in the same time window as a failed-password response (timing must not reveal whether the email exists) |\n\n### Expected Outcome\nThe application returns the same generic error for a non-existent email as for a wrong password, preventing user enumeration. Response timing does not leak existence of the account.\n\n---",
-        "selected": true,
-        "uploaded": false,
-        "uploadError": null,
-        "approved": true,
-        "rejected": false,
-        "approverComment": ""
-      },
-      {
-        "id": 3,
-        "name": "[TC-007] Login Form Submission with Empty Fields",
-        "type": "Negative",
-        "priority": "Medium",
-        "precondition": "None",
-        "steps": [
-          {
-            "description": "Navigate to `/login`",
-            "expectedResult": "Login page displayed"
-          },
-          {
-            "description": "Leave both email and password blank; click \"Sign In\"",
-            "expectedResult": "Client-side validation fires; submission is blocked; both fields are highlighted as required"
-          },
-          {
-            "description": "Enter a valid email only, leave password blank; click \"Sign In\"",
-            "expectedResult": "Submission blocked; password field highlighted as required"
-          },
-          {
-            "description": "Leave email blank, enter a password; click \"Sign In\"",
-            "expectedResult": "Submission blocked; email field highlighted as required"
-          },
-          {
-            "description": "Confirm no HTTP request is sent for any of the above",
-            "expectedResult": "Network tab shows no POST to `/api/auth/login`"
-          }
-        ],
-        "outcome": "The form enforces presence validation client-side; no login request reaches the backend when mandatory fields are empty. ---",
-        "content": "## Test Case: [TC-007] Login Form Submission with Empty Fields\n\n**Type:** Negative\n**Priority:** Medium\n\n### Preconditions\n- None\n\n### Test Steps\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Navigate to `/login` | Login page displayed |\n| 2 | Leave both email and password blank; click \"Sign In\" | Client-side validation fires; submission is blocked; both fields are highlighted as required |\n| 3 | Enter a valid email only, leave password blank; click \"Sign In\" | Submission blocked; password field highlighted as required |\n| 4 | Leave email blank, enter a password; click \"Sign In\" | Submission blocked; email field highlighted as required |\n| 5 | Confirm no HTTP request is sent for any of the above | Network tab shows no POST to `/api/auth/login` |\n\n### Expected Outcome\nThe form enforces presence validation client-side; no login request reaches the backend when mandatory fields are empty.\n\n---",
-        "selected": true,
-        "uploaded": false,
-        "uploadError": null,
-        "approved": true,
-        "rejected": false,
-        "approverComment": ""
-      },
-      {
-        "id": 4,
-        "name": "[TC-008] SQL Injection and XSS Attempts in Login Fields",
-        "type": "Security",
-        "priority": "Critical",
-        "precondition": "The application is deployed in a test environment with server-side logging accessible\nRegistered user: `test@demo.com` / `Test1234!`",
-        "steps": [
-          {
-            "description": "Navigate to `/login`",
-            "expectedResult": "Login page displayed"
-          },
-          {
-            "description": "Enter `' OR '1'='1' --` in the email field; enter any password; click \"Sign In\"",
-            "expectedResult": "Response is \"Invalid email or password\"; user is NOT authenticated; no SQL error or stack trace exposed"
-          },
-          {
-            "description": "Enter `<script>alert('xss')</script>` in the email field; any password; click \"Sign In\"",
-            "expectedResult": "Script is not executed; value is escaped in any reflected output; response is the standard error message"
-          },
-          {
-            "description": "Enter `admin@demo.com'--` in email; any password; click \"Sign In\"",
-            "expectedResult": "Standard error; not authenticated"
-          },
-          {
-            "description": "Check server logs",
-            "expectedResult": "No unhandled exceptions or raw SQL errors logged; all inputs are parameterised or sanitised"
-          }
-        ],
-        "outcome": "All injection payloads are treated as plain strings. No authentication bypass, script execution, or internal error disclosure occurs. ---",
-        "content": "## Test Case: [TC-008] SQL Injection and XSS Attempts in Login Fields\n\n**Type:** Security\n**Priority:** Critical\n\n### Preconditions\n- The application is deployed in a test environment with server-side logging accessible\n- Registered user: `test@demo.com` / `Test1234!`\n\n### Test Steps\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Navigate to `/login` | Login page displayed |\n| 2 | Enter `' OR '1'='1' --` in the email field; enter any password; click \"Sign In\" | Response is \"Invalid email or password\"; user is NOT authenticated; no SQL error or stack trace exposed |\n| 3 | Enter `<script>alert('xss')</script>` in the email field; any password; click \"Sign In\" | Script is not executed; value is escaped in any reflected output; response is the standard error message |\n| 4 | Enter `admin@demo.com'--` in email; any password; click \"Sign In\" | Standard error; not authenticated |\n| 5 | Check server logs | No unhandled exceptions or raw SQL errors logged; all inputs are parameterised or sanitised |\n\n### Expected Outcome\nAll injection payloads are treated as plain strings. No authentication bypass, script execution, or internal error disclosure occurs.\n\n---",
-        "selected": true,
-        "uploaded": false,
-        "uploadError": null,
-        "approved": true,
-        "rejected": false,
-        "approverComment": ""
-      },
-      {
-        "id": 5,
-        "name": "[TC-009] Lockout Counter Resets After Successful Login",
-        "type": "Edge Case",
-        "priority": "High",
-        "precondition": "Registered user: `test@demo.com` / `Test1234!`\nNo prior failed attempts on the account",
-        "steps": [
-          {
-            "description": "Attempt login with wrong password **4 times**",
-            "expectedResult": "Each attempt shows \"Invalid email or password\""
-          },
-          {
-            "description": "Log in with the **correct** password",
-            "expectedResult": "User is authenticated; redirected to `/dashboard`"
-          },
-          {
-            "description": "Log out",
-            "expectedResult": "User returned to `/login`"
-          },
-          {
-            "description": "Attempt login with wrong password **4 more times**",
-            "expectedResult": "Each attempt shows \"Invalid email or password\" (counter has reset to 0 after successful login)"
-          },
-          {
-            "description": "Attempt login with wrong password a **5th time**",
-            "expectedResult": "Shows \"Invalid email or password\" — account is NOT locked yet (counter is at 5 cumulative *since last success*, so the 6th would lock)"
-          },
-          {
-            "description": "Attempt login with correct credentials",
-            "expectedResult": "User logs in successfully"
-          }
-        ],
-        "outcome": "A successful login resets the failed-attempt counter. Prior failures before a successful login do not carry over and contribute to lockout. ---",
-        "content": "## Test Case: [TC-009] Lockout Counter Resets After Successful Login\n\n**Type:** Edge Case\n**Priority:** High\n\n### Preconditions\n- Registered user: `test@demo.com` / `Test1234!`\n- No prior failed attempts on the account\n\n### Test Steps\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Attempt login with wrong password **4 times** | Each attempt shows \"Invalid email or password\" |\n| 2 | Log in with the **correct** password | User is authenticated; redirected to `/dashboard` |\n| 3 | Log out | User returned to `/login` |\n| 4 | Attempt login with wrong password **4 more times** | Each attempt shows \"Invalid email or password\" (counter has reset to 0 after successful login) |\n| 5 | Attempt login with wrong password a **5th time** | Shows \"Invalid email or password\" — account is NOT locked yet (counter is at 5 cumulative *since last success*, so the 6th would lock) |\n| 6 | Attempt login with correct credentials | User logs in successfully |\n\n### Expected Outcome\nA successful login resets the failed-attempt counter. Prior failures before a successful login do not carry over and contribute to lockout.\n\n---",
-        "selected": true,
-        "uploaded": false,
-        "uploadError": null,
-        "approved": true,
-        "rejected": false,
-        "approverComment": ""
-      },
-      {
-        "id": 6,
-        "name": "[TC-010] Login Response Performance — p95 Under 500ms",
+        "name": "[TC-006] Category Options Display a Product Count Badge",
         "type": "Functional",
         "priority": "High",
-        "precondition": "Performance test tooling available (e.g. k6, JMeter, or Gatling)\nTest environment is provisioned to production-equivalent spec\n100 registered test user accounts available",
+        "precondition": "User is on a listing page with the category filter visible",
         "steps": [
           {
-            "description": "Configure load script: 50 concurrent virtual users, each performing a valid login over 60 seconds",
-            "expectedResult": "Script ready"
+            "description": "Open the filter panel and inspect the category list",
+            "expectedResult": "Each category label shows a numeric count alongside it (e.g. \"Bags (42)\")"
           },
           {
-            "description": "Execute load test against `POST /api/auth/login` with valid credentials",
-            "expectedResult": "Requests execute"
+            "description": "Select an additional filter (e.g. a brand filter) that reduces the available product set",
+            "expectedResult": "Category counts update to reflect the narrowed product set"
           },
           {
-            "description": "Collect response time percentiles from results",
-            "expectedResult": "p50, p95, p99 captured"
+            "description": "Verify the count next to a category matches the number of results that would be returned if that category were selected",
+            "expectedResult": "Count is accurate and dynamically updated"
           },
           {
-            "description": "Evaluate p95 result",
-            "expectedResult": "p95 response time **≤ 500ms**"
-          },
-          {
-            "description": "Inspect error rate",
-            "expectedResult": "Error rate is **0%** (no 5xx responses) during the load run"
+            "description": "Deselect the additional filter",
+            "expectedResult": "Category counts revert to their original values"
           }
         ],
-        "outcome": "At 50 concurrent users, the login endpoint responds at p95 ≤ 500ms with no server errors. ---",
-        "content": "## Test Case: [TC-010] Login Response Performance — p95 Under 500ms\n\n**Type:** Non-Functional\n**Priority:** High\n\n### Preconditions\n- Performance test tooling available (e.g. k6, JMeter, or Gatling)\n- Test environment is provisioned to production-equivalent spec\n- 100 registered test user accounts available\n\n### Test Steps\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Configure load script: 50 concurrent virtual users, each performing a valid login over 60 seconds | Script ready |\n| 2 | Execute load test against `POST /api/auth/login` with valid credentials | Requests execute |\n| 3 | Collect response time percentiles from results | p50, p95, p99 captured |\n| 4 | Evaluate p95 result | p95 response time **≤ 500ms** |\n| 5 | Inspect error rate | Error rate is **0%** (no 5xx responses) during the load run |\n\n### Expected Outcome\nAt 50 concurrent users, the login endpoint responds at p95 ≤ 500ms with no server errors.\n\n---",
+        "outcome": "Each category in the filter list shows an accurate, dynamically updated product count to guide user selection. ---",
+        "content": "## Test Case: [TC-006] Category Options Display a Product Count Badge\n\n**Type:** Functional\n**Priority:** High\n\n### Preconditions\n- User is on a listing page with the category filter visible\n\n### Test Steps\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Open the filter panel and inspect the category list | Each category label shows a numeric count alongside it (e.g. \"Bags (42)\") |\n| 2 | Select an additional filter (e.g. a brand filter) that reduces the available product set | Category counts update to reflect the narrowed product set |\n| 3 | Verify the count next to a category matches the number of results that would be returned if that category were selected | Count is accurate and dynamically updated |\n| 4 | Deselect the additional filter | Category counts revert to their original values |\n\n### Expected Outcome\nEach category in the filter list shows an accurate, dynamically updated product count to guide user selection.\n\n---",
         "selected": true,
         "uploaded": false,
         "uploadError": null,
-        "approved": false,
-        "rejected": true,
-        "approverComment": "hi"
+        "approved": true,
+        "rejected": false,
+        "approverComment": ""
       }
     ],
     "status": "uploaded",
-    "approvedBy": "abc",
-    "approvedAt": "2026-06-01T21:08:29.894Z",
-    "uploadedAt": "2026-06-01T21:08:47.008Z",
+    "approvedBy": "qqww",
+    "approvedAt": "2026-06-25T19:20:51.121Z",
+    "uploadedAt": "2026-06-25T19:21:08.537Z",
     "zephyrKeys": [
-      "DEMO-T6",
-      "DEMO-T7",
-      "DEMO-T8",
-      "DEMO-T9",
-      "DEMO-T10",
-      "DEMO-T11"
+      "QAP-T133",
+      "QAP-T134",
+      "QAP-T135"
+    ]
+  },
+  "apr-1782989540191-4216": {
+    "id": "apr-1782989540191-4216",
+    "issueKey": "QAP-14",
+    "jiraIssueId": "10207",
+    "issueSummary": "Filter option should have categories listed to select",
+    "projectKey": "QAP",
+    "folder": "Generated",
+    "requestedBy": "iii",
+    "requestedAt": "2026-07-02T10:52:20.191Z",
+    "testCases": [
+      {
+        "id": 0,
+        "name": "[TC-010] Category List Loads Correctly When API Response Is Slow (Loading State)",
+        "type": "Functional",
+        "priority": "High",
+        "precondition": "Browser DevTools Network throttling set to \"Slow 3G\" (or equivalent ≥ 2 s latency)\nPLP is loaded fresh",
+        "steps": [
+          {
+            "description": "Navigate to PLP under throttled conditions",
+            "expectedResult": "Page begins loading"
+          },
+          {
+            "description": "Immediately open/inspect the Filter panel",
+            "expectedResult": "A loading skeleton, spinner, or placeholder is shown in the Category section"
+          },
+          {
+            "description": "Wait for the network response to complete",
+            "expectedResult": "Category list replaces the loading state with actual options"
+          },
+          {
+            "description": "Verify no categories are duplicated in the list",
+            "expectedResult": "Each category appears exactly once"
+          },
+          {
+            "description": "Select a category",
+            "expectedResult": "Filter behaves normally post-load"
+          }
+        ],
+        "outcome": "The filter panel gracefully handles delayed API responses with a visible loading state, then renders the correct category list without duplicates when data arrives. ---",
+        "content": "## Test Case: [TC-010] Category List Loads Correctly When API Response Is Slow (Loading State)\n\n**Type:** Functional\n**Priority:** High\n\n### Preconditions\n- Browser DevTools Network throttling set to \"Slow 3G\" (or equivalent ≥ 2 s latency)\n- PLP is loaded fresh\n\n### Test Steps\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Navigate to PLP under throttled conditions | Page begins loading |\n| 2 | Immediately open/inspect the Filter panel | A loading skeleton, spinner, or placeholder is shown in the Category section |\n| 3 | Wait for the network response to complete | Category list replaces the loading state with actual options |\n| 4 | Verify no categories are duplicated in the list | Each category appears exactly once |\n| 5 | Select a category | Filter behaves normally post-load |\n\n### Expected Outcome\nThe filter panel gracefully handles delayed API responses with a visible loading state, then renders the correct category list without duplicates when data arrives.\n\n---",
+        "selected": true,
+        "uploaded": false,
+        "uploadError": null,
+        "approved": true,
+        "rejected": false,
+        "approverComment": ""
+      }
+    ],
+    "status": "uploaded",
+    "approvedBy": "www",
+    "approvedAt": "2026-07-02T10:52:33.270Z",
+    "uploadedAt": "2026-07-02T10:52:40.715Z",
+    "zephyrKeys": [
+      "QAP-T136"
     ]
   }
 }

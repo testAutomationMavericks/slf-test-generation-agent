@@ -204,7 +204,7 @@ main{flex:1;max-width:820px;margin:0 auto;width:100%;padding:28px 28px 80px}
 <header>
   <div style="display:flex;flex-direction:column">
     <span class="wordmark">Selfridges</span>
-    <span class="tagline">Test Management</span>
+    <span class="tagline">Test Curator</span>
   </div>
   <div class="vline"></div>
   <span class="ikey" id="hdrKey">…</span>
@@ -242,6 +242,9 @@ async function init(){
     const r=await fetch('/api/approvals/'+id+'/data');
     if(!r.ok)throw new Error('Approval not found — it may have expired or been deleted.');
     apr=await r.json();
+    if(typeof apr==='string'){try{apr=JSON.parse(apr);}catch{throw new Error('Malformed approval data received from server.');}}
+    if(!apr||typeof apr!=='object')throw new Error('Invalid approval data received from server.');
+    if(!Array.isArray(apr.testCases)){throw new Error('Approval is missing test cases. Please delete this request and send for approval again.');}
     render();
   }catch(e){showErr(e.message)}
 }
@@ -260,7 +263,7 @@ function render(){
   document.getElementById('hdrTitle').textContent=apr.issueSummary||'';
   const b=document.getElementById('hdrStatus');
   b.textContent=apr.status;b.className='sbadge '+apr.status;
-  document.title='Review: '+apr.issueKey+' — Selfridges Test Management';
+  document.title='Review: '+apr.issueKey+' — Selfridges Test Curator';
   // Info box
   document.getElementById('infoBox').innerHTML=[
     ii('Requested by',apr.requestedBy),

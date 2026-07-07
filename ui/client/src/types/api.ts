@@ -2,12 +2,9 @@
 // Shared types between React client and Express server
 
 export type AIProvider = 'claudecode' | 'anthropic' | 'openai' | 'local'
-export type AppMode = 'mock' | 'live'
-export type KBBackend = 'local' | 'pgvector'
 export type ApprovalStatus = 'pending' | 'approved' | 'partial' | 'rejected' | 'uploaded'
 
 export interface UIConfig {
-  mode: AppMode
   aiProvider: AIProvider
   jiraUrl: string
   jiraBearerToken: string
@@ -29,8 +26,10 @@ export interface UIConfig {
   localModel: string
   localApiKey: string
   autoSaveToKB: boolean
-  kbBackend: KBBackend
   databaseUrl: string
+  dbName: string
+  kbScopeMode: 'project' | 'multi' | 'all'
+  kbScopeProjects: string[]
 }
 
 export interface JiraIssue {
@@ -64,15 +63,22 @@ export interface ZephyrTestCase {
 export interface KBStats {
   total: number
   lastUpdated?: string
-  dataDir?: string
-  backend?: 'local' | 'pgvector'
+  backend?: 'pgvector'
   connectionUrl?: string
 }
 
+export interface ServiceStatuses {
+  jira: boolean
+  confluence: boolean
+  zephyr: boolean
+  db: boolean
+  ai: boolean
+}
+
 export interface ServerStatus {
-  mcpConnected: boolean
-  mode: AppMode
-  kbBackend: KBBackend
+  kbBackend: 'pgvector'
+  dbConnected: boolean
+  services: ServiceStatuses
   aiProvider: AIProvider
   model: string
   claudeCode: { available: boolean; version?: string; error?: string }

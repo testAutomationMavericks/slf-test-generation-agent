@@ -1,6 +1,6 @@
 // ui/client/src/components/Header.tsx
 import type { Page } from '../App'
-import type { ServerStatus, KBBackend } from '../types/api'
+import type { ServerStatus, ServiceStatuses } from '../types/api'
 
 interface Props {
   status: ServerStatus | null
@@ -10,9 +10,9 @@ interface Props {
 
 const PROVIDER_LABELS: Record<string, string> = {
   claudecode: 'Claude Code',
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  local: 'Local',
+  anthropic:  'Anthropic API',
+  openai:     'OpenAI',
+  local:      'Local',
 }
 
 const NAV_ITEMS: Array<{ id: Page; label: string }> = [
@@ -22,10 +22,18 @@ const NAV_ITEMS: Array<{ id: Page; label: string }> = [
   { id: 'config',    label: 'Config'         },
 ]
 
+const SERVICE_LABELS: Array<{ key: keyof ServiceStatuses; label: string; providerLabel?: boolean }> = [
+  { key: 'jira',       label: 'Jira'           },
+  { key: 'confluence', label: 'Confluence'      },
+  { key: 'zephyr',     label: 'Zephyr'          },
+  { key: 'db',         label: 'Knowledge Base'  },
+  { key: 'ai',         label: 'AI',             providerLabel: true },
+]
+
 export function Header({ status, page, onNav }: Props) {
-  const connected = status?.mcpConnected ?? false
-  const provider  = status?.aiProvider ?? 'claudecode'
-  const mode      = status?.mode ?? 'mock'
+  const loading  = status === null
+  const provider = status?.aiProvider ?? 'claudecode'
+  const svc      = status?.services ?? { jira: false, confluence: false, zephyr: false, db: false, ai: false }
 
   return (
     <header style={{
@@ -38,51 +46,32 @@ export function Header({ status, page, onNav }: Props) {
       flexShrink: 0,
       position: 'relative',
     }}>
-      {/* Yellow accent stripe — bottom left, matches selfridges.com */}
+      {/* Yellow accent stripe */}
       <div style={{
-        position: 'absolute',
-        bottom: 0, left: 0,
-        width: '100%',
-        height: '2px',
+        position: 'absolute', bottom: 0, left: 0,
+        width: '100%', height: '2px', pointerEvents: 'none',
         background: 'linear-gradient(90deg, #f0c040 0%, #f0c040 160px, transparent 160px)',
-        pointerEvents: 'none',
       }} />
 
-      {/* Wordmark — Selfridges typographic style */}
+      {/* Wordmark */}
       <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        marginRight: 36,
-        paddingRight: 24,
-        borderRight: '1px solid #1c1c1c',
-        flexShrink: 0,
+        display: 'flex', flexDirection: 'column', justifyContent: 'center',
+        marginRight: 36, paddingRight: 24,
+        borderRight: '1px solid #1c1c1c', flexShrink: 0,
       }}>
         <div style={{
           fontFamily: "'Cormorant Garamond', serif",
-          fontSize: 22,
-          fontWeight: 600,
-          letterSpacing: '.24em',
-          color: '#fff',
-          lineHeight: 1,
-          textTransform: 'uppercase',
-        }}>
-          Selfridges
-        </div>
+          fontSize: 22, fontWeight: 600, letterSpacing: '.24em',
+          color: '#fff', lineHeight: 1, textTransform: 'uppercase',
+        }}>Selfridges</div>
         <div style={{
           fontFamily: "'DM Sans', sans-serif",
-          fontSize: 9,
-          fontWeight: 600,
-          letterSpacing: '.32em',
-          color: '#f0c040',
-          textTransform: 'uppercase',
-          marginTop: 4,
-        }}>
-          Test Management
-        </div>
+          fontSize: 11, fontWeight: 600, letterSpacing: '.28em',
+          color: '#f0c040', textTransform: 'uppercase', marginTop: 4,
+        }}>Test Curator</div>
       </div>
 
-      {/* Navigation — uppercase, tracking, Selfridges style */}
+      {/* Navigation */}
       <nav style={{ display: 'flex', alignItems: 'stretch' }}>
         {NAV_ITEMS.map(item => {
           const active = page === item.id
@@ -91,20 +80,14 @@ export function Header({ status, page, onNav }: Props) {
               key={item.id}
               onClick={() => onNav(item.id)}
               style={{
-                height: '100%',
-                padding: '0 22px',
-                border: 'none',
+                height: '100%', padding: '0 22px', border: 'none',
                 borderBottom: active ? '2px solid #f0c040' : '2px solid transparent',
                 background: 'transparent',
                 color: active ? '#fff' : '#666',
                 fontFamily: "'DM Sans', sans-serif",
-                fontSize: 11,
-                fontWeight: 600,
-                letterSpacing: '.18em',
-                textTransform: 'uppercase',
-                cursor: 'pointer',
-                transition: 'color .15s',
-                marginBottom: '-1px',
+                fontSize: 11, fontWeight: 600, letterSpacing: '.18em',
+                textTransform: 'uppercase', cursor: 'pointer',
+                transition: 'color .15s', marginBottom: '-1px',
               }}
               onMouseEnter={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.color = '#bbb' }}
               onMouseLeave={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.color = '#666' }}
@@ -115,72 +98,49 @@ export function Header({ status, page, onNav }: Props) {
         })}
       </nav>
 
-      {/* Right status strip */}
+      {/* ── Service status bar ── separated from nav by left border ── */}
       <div style={{
         marginLeft: 'auto',
         display: 'flex',
         alignItems: 'center',
-        gap: 0,
-        paddingRight: 24,
+        paddingLeft: 20,
+        paddingRight: 20,
         borderLeft: '1px solid #1c1c1c',
-        paddingLeft: 24,
+        gap: 8,
       }}>
-        {/* Connection indicator */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginRight: 20 }}>
-          <div style={{
-            width: 5, height: 5,
-            background: connected ? '#3d9970' : '#666',
-            boxShadow: connected ? '0 0 5px #3d9970' : 'none',
-            flexShrink: 0,
-          }} />
-          <span style={{
-            fontFamily: "'DM Sans', sans-serif",
-            fontSize: 11, fontWeight: 600,
-            letterSpacing: '.14em',
-            textTransform: 'uppercase',
-            color: connected ? '#3d9970' : '#888',
-          }}>
-            {connected ? 'Connected' : status ? 'Offline' : '…'}
-          </span>
+
+        {/* Service status chips */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {SERVICE_LABELS.map(({ key, label, providerLabel }) => {
+            const on      = !loading && svc[key]
+            const unknown = loading
+            const chipLabel = providerLabel
+              ? `${label}: ${unknown ? '…' : (PROVIDER_LABELS[provider] ?? provider)}`
+              : label
+            const title = unknown
+              ? `${label}: loading…`
+              : on ? `${label}: ready` : `${label}: not configured`
+            return (
+              <span
+                key={key}
+                title={title}
+                style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 9, fontWeight: 600,
+                  letterSpacing: '.1em', textTransform: 'uppercase',
+                  padding: '4px 9px',
+                  border: `1px solid ${unknown ? '#2a2a2a' : on ? 'rgba(61,153,112,.45)' : 'rgba(120,40,40,.5)'}`,
+                  background: unknown ? 'transparent' : on ? 'rgba(61,153,112,.1)' : 'rgba(120,40,40,.08)',
+                  color: unknown ? '#333' : on ? '#3d9970' : '#7a3030',
+                  whiteSpace: 'nowrap',
+                  transition: 'all .3s',
+                }}
+              >
+                {chipLabel}
+              </span>
+            )
+          })}
         </div>
-
-        {/* Divider */}
-        <div style={{ width: 1, height: 18, background: '#222', marginRight: 20 }} />
-
-        {/* Data source badge — MOCK or LIVE */}
-        <span style={{
-          fontFamily: "'DM Mono', monospace",
-          fontSize: 10, fontWeight: 600, letterSpacing: '.1em',
-          textTransform: 'uppercase',
-          color: mode === 'mock' ? '#bbb' : '#3d9970',
-          border: `1px solid ${mode === 'mock' ? '#666' : 'rgba(61,153,112,.4)'}`,
-          padding: '3px 8px', marginRight: 6,
-        }}>
-          {mode === 'mock' ? 'MOCK' : 'LIVE'}
-        </span>
-
-        {/* KB backend badge — LOCAL or PG */}
-        <span style={{
-          fontFamily: "'DM Mono', monospace",
-          fontSize: 10, fontWeight: 600, letterSpacing: '.1em',
-          textTransform: 'uppercase',
-          color: status?.kbBackend === 'pgvector' ? '#3d9970' : '#999',
-          border: `1px solid ${status?.kbBackend === 'pgvector' ? 'rgba(61,153,112,.4)' : '#555'}`,
-          padding: '3px 8px', marginRight: 10,
-        }}>
-          {'KB:' + (status?.kbBackend === 'pgvector' ? 'PG' : 'LOCAL')}
-        </span>
-
-        {/* Provider badge — yellow */}
-        <span style={{
-          fontFamily: "'DM Mono', monospace",
-          fontSize: 10, fontWeight: 600, letterSpacing: '.1em',
-          textTransform: 'uppercase', color: '#f0c040',
-          border: '1px solid rgba(240,192,64,.3)',
-          padding: '3px 8px', background: 'rgba(240,192,64,.04)',
-        }}>
-          {PROVIDER_LABELS[provider] ?? provider}
-        </span>
       </div>
     </header>
   )

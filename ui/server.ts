@@ -21,40 +21,13 @@ import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { spawn, spawnSync } from 'child_process';
 import Anthropic from '@anthropic-ai/sdk';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { LocalKnowledgeBase, retrieveLocalContextForIssue } from '../src/local-kb/local-vector-db.js';
-import { formatTestCaseDocument } from '../src/knowledge-base/formatters.js';
+import { PgKnowledgeBase } from '../src/kb/pg-vector-db.js';
+import type { IKnowledgeBase } from '../src/kb/interface.js';
+import { retrieveKBContext, type KBScope } from '../src/kb/retrieve-context.js';
+import { formatTestCaseDocument, formatZephyrDocument } from '../src/knowledge-base/formatters.js';
 import { createApprovalStore } from '../src/approvals/approval-store.js';
 import type { JiraIssue, ZephyrTestCase } from './client/src/types/api.js';
 
-// ─── Voyage-3 Embeddings (Phase 1 scaling) ────────────────────────────────────
-// Falls back to deterministic embeddings if no API key configured
-async function getEmbedding(text: string): Promise<number[]> {
-  const key = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
-  if (!key) return []; // local-vector-db will use its own deterministic embed
-
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'voyage-3',
-        input: text.slice(0, 8000),
-        input_type: 'document',
-      }),
-    });
-    if (!res.ok) return [];
-    const data = await res.json() as { data: Array<{ embedding: number[] }> };
-    return data.data?.[0]?.embedding ?? [];
-  } catch {
-    return []; // fallback to deterministic
-  }
-}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -69,24 +42,19 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─── KB Backend (Phase 1 = local JSON, Phase 2 = pgvector) ──────────────────
+// ─── KB Backend — pgvector (EC2) required ─────────────────────────────────────
 function createKB(): IKnowledgeBase {
-  if (config.kbBackend === 'pgvector') {
-    const dbUrl = config.databaseUrl || process.env.DATABASE_URL;
-    const apiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
-    if (!dbUrl) {
-      console.warn('  ⚠ KB_BACKEND=pgvector but DATABASE_URL not set — falling back to local');
-      return new LocalKnowledgeBase(path.join(ROOT, 'local-kb-data'));
-    }
-    if (!apiKey) {
-      console.warn('  ⚠ KB_BACKEND=pgvector but ANTHROPIC_API_KEY not set — falling back to local');
-      return new LocalKnowledgeBase(path.join(ROOT, 'local-kb-data'));
-    }
-    console.log('  KB backend: pgvector (Phase 2)');
-    return new PgKnowledgeBase(dbUrl, apiKey);
+  const dbUrl = buildDbUrl(config.databaseUrl || process.env.DATABASE_URL, config.dbName || process.env.DB_NAME);
+  const apiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
+  if (!dbUrl) {
+    console.warn('  ⚠ DATABASE_URL not configured — KB features unavailable until EC2/Neon is set up');
+  } else {
+    console.log(apiKey
+      ? '  KB backend: pgvector + Voyage-3 embeddings'
+      : '  KB backend: pgvector + local deterministic embeddings (add Anthropic API key for better quality)'
+    );
   }
-  console.log('  KB backend: local JSON (Phase 1)');
-  return new LocalKnowledgeBase(path.join(ROOT, 'local-kb-data'));
+  return new PgKnowledgeBase(dbUrl || 'unconfigured', apiKey || '');
 }
 
 // db and approvalStore are initialised after config is loaded below
@@ -98,7 +66,6 @@ let approvalStore: any;
 const CONFIG_PATH = path.join(ROOT, 'ui-config.json');
 
 export interface UIConfig {
-  mode: 'mock' | 'live';
   /** Which AI engine to use for generation */
   aiProvider: 'claudecode' | 'anthropic' | 'openai' | 'local';
   /** @deprecated use aiProvider */
@@ -128,8 +95,13 @@ export interface UIConfig {
   localApiKey: string;       // optional — some local servers need one
   // ── General ───────────────────────────────────────────────────────────────
   autoSaveToKB: boolean;
-  kbBackend: 'local' | 'pgvector';
-  databaseUrl: string;
+  databaseUrl: string;  // base URL without dbname, e.g. postgresql://user:pass@host:5432
+  dbName: string;       // database name — appended to databaseUrl to form the full connection string
+  kbScopeMode: 'project' | 'multi' | 'all';  // KB retrieval scope during generation
+  kbScopeProjects: string[];                  // projects to include when mode is 'multi'
+  // ── Generation preferences ─────────────────────────────────────────────────
+  genPriorities: string[];   // e.g. ['Critical', 'High']
+  genTypes: string[];        // e.g. ['Functional', 'Regression', 'Edge Case', 'Negative', 'Security']
 }
 
 function loadConfig(): UIConfig {
@@ -142,7 +114,6 @@ function loadConfig(): UIConfig {
     return { aiProvider: 'claudecode', ...saved };
   }
   return {
-    mode: 'mock',
     aiProvider: 'claudecode',
     jiraUrl: process.env.JIRA_URL ?? '',
     jiraBearerToken: process.env.JIRA_BEARER_TOKEN ?? '',
@@ -164,22 +135,48 @@ function loadConfig(): UIConfig {
     localModel: process.env.LOCAL_MODEL ?? 'llama3.2',
     localApiKey: process.env.LOCAL_MODEL_API_KEY ?? '',
     autoSaveToKB: false,
+    databaseUrl: process.env.DATABASE_URL ?? '',
+    dbName: process.env.DB_NAME ?? '',
+    kbScopeMode: 'project',
+    kbScopeProjects: [],
+    genPriorities: ['Critical', 'High'],
+    genTypes: ['Functional', 'Regression', 'Edge Case', 'Negative', 'Security'],
   };
+}
+
+// Builds the full PostgreSQL connection string from base URL + dbName field.
+// If databaseUrl already contains a path (dbname), dbName overrides it.
+function buildDbUrl(baseUrl?: string, dbName?: string): string {
+  const url = (baseUrl || '').trim();
+  if (!url) return '';
+  const name = (dbName || '').trim();
+  if (!name) return url;
+  try {
+    const u = new URL(url);
+    u.pathname = '/' + name;
+    return u.toString();
+  } catch {
+    // Not a valid URL — append as-is
+    return url.replace(/\/[^/]*$/, '') + '/' + name;
+  }
 }
 
 function saveConfig(c: UIConfig) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2));
 }
 
+// Auto-detect SSL: Neon and any URL with sslmode=require need it
+export function requiresSsl(url: string): boolean {
+  return /neon\.tech|sslmode=require/i.test(url) || process.env.DB_SSL === 'require';
+}
+
 let config = loadConfig();
 
 // Now config is loaded — safe to create KB and approval store
 db = createKB();
-approvalStore = createApprovalStore({
-  filePath: path.join(ROOT, 'approvals.json'),
-  databaseUrl: config.databaseUrl || process.env.DATABASE_URL,
-  kbBackend: config.kbBackend,
-});
+approvalStore = createApprovalStore(
+  buildDbUrl(config.databaseUrl || process.env.DATABASE_URL, config.dbName || process.env.DB_NAME) || undefined
+);
 
 // ─── WebSocket broadcast ──────────────────────────────────────────────────────
 
@@ -190,109 +187,6 @@ function broadcast(event: string, data: unknown) {
 
 // ─── MCP clients (used by API mode only) ─────────────────────────────────────
 
-let mcpClients: { jira?: Client; confluence?: Client; zephyr?: Client } = {};
-let mcpConnected = false;
-
-async function startMockClient(name: string, file: string): Promise<Client> {
-  // Use the local tsx binary from node_modules to avoid PATH issues
-  const tsxBin = path.join(ROOT, 'node_modules', '.bin', 'tsx');
-  const tsxCmd = fs.existsSync(tsxBin) ? tsxBin : 'npx';
-  const tsxArgs = fs.existsSync(tsxBin)
-    ? [path.join(ROOT, file)]
-    : ['tsx', path.join(ROOT, file)];
-
-  const transport = new StdioClientTransport({
-    command: tsxCmd,
-    args: tsxArgs,
-    cwd: ROOT,
-    env: { ...process.env, NODE_ENV: 'development' },
-  });
-  const client = new Client({ name, version: '1.0.0' });
-  await client.connect(transport);
-  return client;
-}
-
-
-// ─── Sync .mcp.json with current mode ────────────────────────────────────────
-
-/**
- * When Claude Code runs `--print`, it reads .mcp.json in the project root
- * to start its own MCP servers. We rewrite .mcp.json to match the UI's
- * current mode (mock or live) so Claude Code uses the same servers.
- */
-function syncMCPJson() {
-  const mockConfig = {
-    mcpServers: {
-      jira:       { command: 'npx', args: ['tsx', 'src/mocks/jira-server.ts'] },
-      confluence: { command: 'npx', args: ['tsx', 'src/mocks/confluence-server.ts'] },
-      zephyr:     { command: 'npx', args: ['tsx', 'src/mocks/zephyr-server.ts'] },
-    },
-  };
-
-  const liveConfig = {
-    mcpServers: {},
-  };
-
-  const chosen = config.mode === 'mock' ? mockConfig : liveConfig;
-  const mcpPath = path.join(ROOT, '.mcp.json');
-  fs.writeFileSync(mcpPath, JSON.stringify(chosen, null, 2));
-  console.log(`  .mcp.json synced for ${config.mode} mode`);
-}
-
-let connectingPromise: Promise<void> | null = null;
-
-async function connectMCP() {
-  // Deduplicate concurrent connection attempts
-  if (connectingPromise) return connectingPromise;
-  connectingPromise = _doConnect().finally(() => { connectingPromise = null; });
-  return connectingPromise;
-}
-
-async function _doConnect() {
-  syncMCPJson();
-
-  // Close existing clients
-  for (const c of [mcpClients.jira, mcpClients.confluence, mcpClients.zephyr]) {
-    if (c !== mcpClients.jira || c === mcpClients.confluence) { // avoid double-close of same client
-      await c?.close().catch(() => {});
-    }
-  }
-  mcpClients = {}; mcpConnected = false;
-
-  broadcast('status', { type: 'connecting', message: 'Connecting MCP…' });
-  console.log(`\n  Connecting MCP servers (mode: ${config.mode})…`);
-
-  if (config.mode === 'mock') {
-    // Connect mock servers one at a time for clearer error messages
-    try {
-      console.log('  Starting mock-jira…');
-      const jira = await startMockClient('mock-jira', 'src/mocks/jira-server.ts');
-      console.log('  ✓ mock-jira');
-
-      console.log('  Starting mock-confluence…');
-      const confluence = await startMockClient('mock-confluence', 'src/mocks/confluence-server.ts');
-      console.log('  ✓ mock-confluence');
-
-      console.log('  Starting mock-zephyr…');
-      const zephyr = await startMockClient('mock-zephyr', 'src/mocks/zephyr-server.ts');
-      console.log('  ✓ mock-zephyr');
-
-      mcpClients = { jira, confluence, zephyr };
-    } catch (err) {
-      console.error('  ✗ MCP connection failed:', err);
-      broadcast('status', { type: 'error', message: `MCP failed: ${err}` });
-      throw err;
-    }
-  } else {
-    // Live mode uses direct REST APIs — no MCP processes needed
-    console.log('  ✓ Live mode: using direct REST APIs (no MCP required)');
-    mcpClients = {};
-  }
-
-  mcpConnected = true;
-  console.log('  ✓ All MCP servers connected\n');
-  broadcast('status', { type: 'connected', message: `Connected (${config.mode})` });
-}
 
 // ─── Generation: Claude Code mode ─────────────────────────────────────────────
 
@@ -453,7 +347,7 @@ async function runViaAPI(
 
   const kbCtx = preloadedKbContext ?? await (async () => {
     if (!issueKey) return '';
-    try { return await retrieveLocalContextForIssue(db, issueKey, issueKey.split('-')[0]); }
+    try { return await retrieveKBContext(db, issueKey, issueKey.split('-')[0], undefined, { mode: config.kbScopeMode ?? 'project', projects: config.kbScopeProjects }); }
     catch { return ''; }
   })();
 
@@ -600,13 +494,14 @@ app.post('/api/config', async (req, res) => {
     openaiApiKey:       inc.openaiApiKey       === mask ? config.openaiApiKey       : (inc.openaiApiKey       ?? config.openaiApiKey),
     localApiKey:        inc.localApiKey        === mask ? config.localApiKey        : (inc.localApiKey        ?? config.localApiKey),
   };
-  const prevKbBackend = config.kbBackend;
+  const prevDbUrl = (config as any)._prevDbUrl ?? '';
+  (config as any)._prevDbUrl = config.databaseUrl || process.env.DATABASE_URL || '';
   saveConfig(config);
-  syncMCPJson(); // keep .mcp.json in sync whenever config changes
 
-  // Hot-swap KB + approval store if backend changed
-  if (config.kbBackend !== prevKbBackend) {
-    console.log(`  Switching KB backend: ${prevKbBackend} → ${config.kbBackend}`);
+  // Hot-swap KB + approval store if database config changed
+  const newDbUrl = buildDbUrl(config.databaseUrl || process.env.DATABASE_URL, config.dbName || process.env.DB_NAME);
+  if (newDbUrl !== prevDbUrl) {
+    console.log(`  Switching KB backend due to database config change`);
     if ('disconnect' in db && typeof (db as any).disconnect === 'function') {
       await (db as any).disconnect().catch(() => {});
     }
@@ -614,26 +509,73 @@ app.post('/api/config', async (req, res) => {
     if ('disconnect' in approvalStore && typeof (approvalStore as any).disconnect === 'function') {
       await (approvalStore as any).disconnect().catch(() => {});
     }
-    approvalStore = createApprovalStore({
-      filePath: path.join(ROOT, 'approvals.json'),
-      databaseUrl: config.databaseUrl || process.env.DATABASE_URL,
-      kbBackend: config.kbBackend,
-    });
+    approvalStore = createApprovalStore(newDbUrl || undefined);
     console.log(`  Approval store: ${approvalStore.backend}`);
   }
 
   res.json({ ok: true });
 });
 
-// Status
-app.get('/api/status', async (_req, res) => {
-  const ccCheck = await checkClaudeCode();
-  const kbStatsRaw = db.getStats();
-  const kbStats = kbStatsRaw instanceof Promise ? await kbStatsRaw : kbStatsRaw;
+// Generation options — lightweight read/write separate from full config save
+app.get('/api/gen-options', (_req, res) => {
   res.json({
-    mcpConnected,
-    mode: config.mode,
-    kbBackend: config.kbBackend ?? 'local',
+    priorities: config.genPriorities ?? ['Critical', 'High'],
+    types:      config.genTypes      ?? ['Functional', 'Regression', 'Edge Case', 'Negative', 'Security'],
+  });
+});
+
+app.post('/api/gen-options', (req, res) => {
+  const { priorities, types } = req.body as { priorities?: string[]; types?: string[] };
+  if (Array.isArray(priorities)) config.genPriorities = priorities;
+  if (Array.isArray(types))      config.genTypes      = types;
+  saveConfig(config);
+  res.json({ ok: true });
+});
+
+// Status
+// Cache Claude Code check — spawning a subprocess on every poll is slow
+let _ccCache: { available: boolean; version?: string; error?: string } | null = null;
+let _ccCacheAt = 0;
+async function checkClaudeCodeCached() {
+  if (_ccCache && Date.now() - _ccCacheAt < 30_000) return _ccCache;
+  _ccCache = await checkClaudeCode();
+  _ccCacheAt = Date.now();
+  return _ccCache;
+}
+
+app.get('/api/status', async (_req, res) => {
+  // Run slow checks in parallel, cap DB at 3 s so the response is always fast
+  const dbTimeout = new Promise<boolean>(r => setTimeout(() => r(false), 3000));
+  const dbCheck = typeof (db as any).isHealthy === 'function'
+    ? (db as any).isHealthy().catch(() => false)
+    : Promise.resolve(false);
+
+  const [ccCheck, kbStatsRaw, dbConnected] = await Promise.all([
+    checkClaudeCodeCached(),
+    db.getStats(),
+    Promise.race([dbCheck, dbTimeout]),
+  ]);
+
+  const kbStats = kbStatsRaw instanceof Promise ? await kbStatsRaw : kbStatsRaw;
+
+  const services = {
+    jira:       !!(config.jiraUrl       && (config.jiraBearerToken || config.jiraApiToken)),
+    confluence: !!(config.confluenceUrl && (config.confluenceApiToken || config.jiraBearerToken || config.jiraApiToken)),
+    zephyr:     !!(config.zephyrBaseUrl && config.zephyrApiToken),
+    db:         dbConnected,
+    ai:         config.aiProvider === 'claudecode'
+                  ? ccCheck.available
+                  : config.aiProvider === 'anthropic'
+                    ? !!config.anthropicApiKey
+                    : config.aiProvider === 'openai'
+                      ? !!config.openaiApiKey
+                      : false,
+  };
+
+  res.json({
+    kbBackend: 'pgvector',
+    dbConnected,
+    services,
     aiProvider: config.aiProvider ?? 'claudecode',
     claudeMode: config.aiProvider ?? 'claudecode',
     model: config.aiProvider === 'openai' ? config.openaiModel
@@ -677,21 +619,12 @@ app.post('/api/claudecode/test', async (_req, res) => {
 app.get('/api/debug', async (_req, res) => {
   const tsxBin = path.join(ROOT, 'node_modules', '.bin', 'tsx');
   const tsxExists = fs.existsSync(tsxBin);
-  const mockFiles = [
-    'src/mocks/jira-server.ts',
-    'src/mocks/confluence-server.ts',
-    'src/mocks/zephyr-server.ts',
-  ].map(f => ({ file: f, exists: fs.existsSync(path.join(ROOT, f)) }));
-
   const cc = await checkClaudeCode();
 
   res.json({
     ROOT,
-    mode: config.mode,
     claudeMode: config.claudeMode,
-    mcpConnected,
     tsx: { bin: tsxBin, exists: tsxExists },
-    mockFiles,
     claudeCode: cc,
     nodeVersion: process.version,
     env: {
@@ -890,6 +823,27 @@ async function directZephyrTestCases(issueKey: string): Promise<ZephyrTestCase[]
   } catch { return []; }
 }
 
+async function directZephyrAllTestCases(projectKey: string): Promise<ZephyrTestCase[]> {
+  const base = config.zephyrBaseUrl.replace(/\/$/, '');
+  const all: ZephyrTestCase[] = [];
+  let startAt = 0;
+  const pageSize = 100;
+
+  while (true) {
+    const url = `${base}/testcases?projectKey=${projectKey}&maxResults=${pageSize}&startAt=${startAt}`;
+    const r = await fetch(url, {
+      headers: { 'Authorization': zephyrAuthHeader(), 'Accept': 'application/json' },
+    });
+    if (!r.ok) { console.warn(`[Zephyr] bulk fetch page startAt=${startAt}: ${r.status}`); break; }
+    const data = await r.json() as { values?: ZephyrTestCase[]; total?: number };
+    const values = data.values ?? [];
+    all.push(...values);
+    if (values.length < pageSize || all.length >= (data.total ?? 0)) break;
+    startAt += pageSize;
+  }
+  return all;
+}
+
 function mapZephyrPriority(priority: string): string {
   const p = priority.toLowerCase();
   if (p === 'critical' || p === 'high') return 'High';
@@ -950,11 +904,6 @@ async function directZephyrAddSteps(
 }
 
 
-// Connect MCP
-app.post('/api/connect', async (_req, res) => {
-  try { await connectMCP(); res.json({ ok: true, mode: config.mode }); }
-  catch (err) { res.status(500).json({ error: String(err) }); }
-});
 
 function defaultJiraJql(): string {
   if (config.jiraEpicKey) {
@@ -1012,16 +961,74 @@ app.get('/api/test/zephyr', async (_req, res) => {
   }
 });
 
+app.get('/api/test/db', async (_req, res) => {
+  const baseUrl = (config.databaseUrl || process.env.DATABASE_URL || '').trim();
+  const dbName  = (config.dbName || process.env.DB_NAME || '').trim();
+  if (!baseUrl) return res.json({ ok: false, steps: [], error: 'No Database URL configured.' });
+
+  const steps: Array<{ label: string; ok: boolean; detail?: string }> = [];
+  const { default: postgres } = await import('postgres');
+  const ssl = requiresSsl(baseUrl) ? ('require' as const) : false;
+  const opts = { ssl, max: 1, connect_timeout: 10, idle_timeout: 5 };
+
+  // Step 1: host reachable — connect to the target db; distinguish network errors from auth/db errors
+  try {
+    const fullUrl = buildDbUrl(baseUrl, dbName);
+    const sql1 = postgres(fullUrl, opts);
+    const [row] = await sql1`SELECT version() AS v`;
+    await sql1.end();
+    const version = (row?.v as string ?? '').split(' ').slice(0, 2).join(' ');
+    steps.push({ label: 'Host reachable', ok: true, detail: version });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // If it's a network-level failure the host is unreachable; auth/db errors mean host IS up
+    const hostUnreachable = /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|connect timeout/i.test(msg);
+    if (hostUnreachable) {
+      steps.push({ label: 'Host reachable', ok: false, detail: msg });
+      return res.json({ ok: false, steps });
+    }
+    // Host responded (auth error, db missing etc.) — host is reachable, continue to step 2
+    steps.push({ label: 'Host reachable', ok: true, detail: 'Host up (proceeding to check database)' });
+  }
+
+  // Step 2: target database accessible
+  const fullUrl = buildDbUrl(baseUrl, dbName);
+  try {
+    const sql2 = postgres(fullUrl, opts);
+    await sql2`SELECT 1`;
+    await sql2.end();
+    steps.push({ label: `Database "${dbName || new URL(baseUrl).pathname.replace('/', '')}" accessible`, ok: true });
+  } catch (e: unknown) {
+    steps.push({ label: 'Database accessible', ok: false, detail: e instanceof Error ? e.message : String(e) });
+    return res.json({ ok: false, steps });
+  }
+
+  // Step 3: schema ready — check both required tables exist
+  try {
+    const sql3 = postgres(fullUrl, opts);
+    const rows = await sql3`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name IN ('kb_documents', 'approvals')
+    `;
+    await sql3.end();
+    const found = rows.map((r: any) => r.table_name as string);
+    const missing = ['kb_documents', 'approvals'].filter(t => !found.includes(t));
+    if (missing.length > 0) {
+      steps.push({ label: 'Schema ready', ok: false, detail: `Missing tables: ${missing.join(', ')} — run src/kb/schema.sql` });
+      return res.json({ ok: false, steps });
+    }
+    steps.push({ label: 'Schema ready', ok: true, detail: 'kb_documents + approvals tables found' });
+  } catch (e: unknown) {
+    steps.push({ label: 'Schema ready', ok: false, detail: e instanceof Error ? e.message : String(e) });
+    return res.json({ ok: false, steps });
+  }
+
+  res.json({ ok: true, steps });
+});
+
 // Jira
 app.get('/api/jira/issues', async (req, res) => {
   try {
-    if (config.mode === 'mock') {
-      if (!mcpConnected) await connectMCP();
-      const jql = (req.query.jql as string) || defaultJiraJql();
-      const result = await mcpClients.jira!.callTool({ name: 'jira_search', arguments: { jql, max_results: 30 } });
-      const text = (result.content as Array<{text:string}>)[0]?.text ?? '[]';
-      return res.json(JSON.parse(text));
-    }
     const jql = (req.query.jql as string) || defaultJiraJql();
     res.json(await directJiraSearch(jql));
   } catch (err) {
@@ -1032,11 +1039,6 @@ app.get('/api/jira/issues', async (req, res) => {
 
 app.get('/api/jira/issue/:key', async (req, res) => {
   try {
-    if (config.mode === 'mock') {
-      if (!mcpConnected) await connectMCP();
-      const result = await mcpClients.jira!.callTool({ name: 'jira_get_issue', arguments: { issue_key: req.params.key } });
-      return res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '{}'));
-    }
     res.json(await directJiraIssue(req.params.key));
   } catch (err) { res.status(500).json({ error: String(err) }); }
 });
@@ -1044,11 +1046,6 @@ app.get('/api/jira/issue/:key', async (req, res) => {
 // Zephyr
 app.get('/api/zephyr/testcases/:issueKey', async (req, res) => {
   try {
-    if (config.mode === 'mock') {
-      if (!mcpConnected) await connectMCP();
-      const result = await mcpClients.zephyr!.callTool({ name: 'zephyr_get_test_cases_by_issue', arguments: { issueKey: req.params.issueKey } });
-      return res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '[]'));
-    }
     res.json(await directZephyrTestCases(req.params.issueKey));
   } catch (err) { res.status(500).json({ error: String(err) }); }
 });
@@ -1058,12 +1055,6 @@ app.get('/api/zephyr/testcases/:issueKey', async (req, res) => {
 app.post('/api/jira/comment', async (req, res) => {
   const { issueKey, comment } = req.body as { issueKey: string; comment: string };
   try {
-    if (config.mode === 'mock') {
-      if (!mcpConnected) await connectMCP();
-      const result = await mcpClients.jira!.callTool({ name: 'jira_add_comment', arguments: { issue_key: issueKey, comment } });
-      const text = (result.content as Array<{text:string}>)[0]?.text ?? '{}';
-      return res.json(JSON.parse(text));
-    }
     await directJiraComment(issueKey, comment);
     res.json({ ok: true });
   } catch (err) {
@@ -1148,8 +1139,6 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
     return res.status(400).json({ error: `Cannot upload — status is ${apr.status}. Needs approval first.` });
   }
 
-  if (config.mode === 'mock' && !mcpConnected) await connectMCP();
-
   const toUpload = apr.testCases.filter(t => t.approved);
   if (!toUpload.length) return res.status(400).json({ error: 'No approved test cases to upload' });
 
@@ -1158,7 +1147,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
 
   // Resolve Jira numeric issueId — needed by Zephyr POST /links/issues
   let resolvedJiraIssueId: string | undefined = (apr as any).jiraIssueId;
-  if (!resolvedJiraIssueId && config.mode === 'live') {
+  if (!resolvedJiraIssueId) {
     try {
       const jiraBase = config.jiraUrl.replace(/\/$/, '');
       const jr = await fetch(`${jiraBase}/rest/api/3/issue/${apr.issueKey}?fields=summary`, { headers: atlassianHeaders() });
@@ -1183,15 +1172,11 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
         labels: ['approved', 'test-agent', apr.issueKey.toLowerCase()],
         issueLinks: [apr.issueKey],
       };
-      const created = config.mode === 'mock'
-        ? JSON.parse(((await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: payload })).content as Array<{text:string}>)[0]?.text ?? '{}').created
-        : await directZephyrCreate(payload);
+      const created = await directZephyrCreate(payload);
       if (created?.key) {
         uploadedKeys.push(created.key);
-        if (config.mode === 'live') {
-          await directZephyrAddSteps(created.key, steps);
-          await directZephyrSetIssueLink(created.key, resolvedJiraIssueId ?? apr.issueKey);
-        }
+        await directZephyrAddSteps(created.key, steps);
+        await directZephyrSetIssueLink(created.key, resolvedJiraIssueId ?? apr.issueKey);
       }
     } catch (err) {
       failed.push(tc.name);
@@ -1201,6 +1186,7 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
 
   // 2. Save each uploaded test to KB individually (unique ID per test)
   let kbSavedCount = 0;
+  const kbDuplicates: Array<{ newKey: string; dup: { id: string; title: string; similarity: number; action: string } }> = [];
   for (let ki = 0; ki < uploadedKeys.length; ki++) {
     const tc = toUpload[ki];
     if (!tc) continue;
@@ -1216,6 +1202,9 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
       doc.id = `generated:${uploadedKeys[ki]}:${apr.issueKey}`;
       await db.addDocument(doc);
       kbSavedCount++;
+      // Collect any near-duplicates detected by PgKnowledgeBase
+      const dupes = (db as any).getLastDuplicates?.() ?? [];
+      for (const dup of dupes) kbDuplicates.push({ newKey: uploadedKeys[ki], dup });
     } catch (e) {
       console.warn(`KB save failed for ${uploadedKeys[ki]}:`, e);
     }
@@ -1229,6 +1218,22 @@ app.post('/api/approvals/:id/upload', async (req, res) => {
       .map((tc, i) => `- *${uploadedKeys[i]}* — ${tc.name}`)
       .join('\n');
 
+    const dupLines = kbDuplicates
+      .filter(d => d.dup.action === 'flagged')
+      .map(d => {
+        const oldKey = d.dup.id.match(/([A-Z]+-T\d+)/)?.[1] ?? d.dup.id;
+        return `- *${d.newKey}* is ${(d.dup.similarity * 100).toFixed(0)}% similar to _${oldKey}_ (${d.dup.title}) — the older entry has been flagged as outdated in the Knowledge Base`;
+      }).join('\n');
+
+    const autoDel = kbDuplicates.filter(d => d.dup.action === 'auto_deleted');
+    const autoDelLine = autoDel.length > 0
+      ? `\n${autoDel.map(d => `- *${d.newKey}* replaced a near-identical KB entry (${d.dup.id}) which has been automatically removed`).join('\n')}`
+      : '';
+
+    const dupSection = (dupLines || autoDelLine)
+      ? `\n\n⚠️ *Duplicate detection — please review:*\n${dupLines}${autoDelLine}`
+      : '';
+
     const comment = `✅ *Test cases approved and uploaded to Zephyr Scale*
 
 Approved by: *${apr.approvedBy}* on ${new Date(apr.approvedAt!).toLocaleDateString()}
@@ -1237,14 +1242,10 @@ Requested by: ${apr.requestedBy}
 *Uploaded test cases (${uploadedKeys.length}):*
 ${tcLines}
 
-All test cases have been added to the team Knowledge Base for future reference.`;
+All test cases have been added to the team Knowledge Base for future reference.${dupSection}`;
 
     try {
-      if (config.mode === 'mock') {
-        await mcpClients.jira!.callTool({ name: 'jira_add_comment', arguments: { issue_key: apr.issueKey, comment } });
-      } else {
-        await directJiraComment(apr.issueKey, comment);
-      }
+      await directJiraComment(apr.issueKey, comment);
       console.log(`  Jira comment posted to ${apr.issueKey}`);
     } catch (err) {
       console.warn(`  Jira comment failed (non-fatal):`, err);
@@ -1278,11 +1279,6 @@ app.delete('/api/approvals/:id', async (req, res) => {
 
 app.post('/api/zephyr/create', async (req, res) => {
   try {
-    if (config.mode === 'mock') {
-      if (!mcpConnected) await connectMCP();
-      const result = await mcpClients.zephyr!.callTool({ name: 'zephyr_create_test_case', arguments: req.body });
-      return res.json(JSON.parse((result.content as Array<{text:string}>)[0]?.text ?? '{}'));
-    }
     const { projectKey, name, objective, precondition, priority, folder, labels, steps } = req.body;
     const payload: Record<string, unknown> = {
       projectKey, name,
@@ -1303,7 +1299,8 @@ app.post('/api/zephyr/create', async (req, res) => {
 // ─── Generate (SSE stream) ────────────────────────────────────────────────────
 
 app.post('/api/generate', async (req, res) => {
-  const { issueKey, prompt: customPrompt, issueDetail: clientIssueDetail } = req.body as { issueKey?: string; prompt?: string; issueDetail?: JiraIssue };
+  const { issueKey, prompt: customPrompt, issueDetail: clientIssueDetail, genPriorities: reqPriorities, genTypes: reqTypes } =
+    req.body as { issueKey?: string; prompt?: string; issueDetail?: JiraIssue; genPriorities?: string[]; genTypes?: string[] };
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -1316,7 +1313,7 @@ app.post('/api/generate', async (req, res) => {
   let confluenceContext = '';
   let existingTestsContext = '';
 
-  if (issueKey && config.mode === 'live') {
+  if (issueKey) {
     try {
       const issue = await directJiraIssue(issueKey);
       issueContext = [
@@ -1358,24 +1355,18 @@ app.post('/api/generate', async (req, res) => {
         console.log(`  Zephyr: no active tests found`);
       }
     } catch (e) { console.log(`  Zephyr fetch skipped: ${e}`); }
-  } else if (issueKey && config.mode === 'mock') {
-    try {
-      if (!mcpConnected) await connectMCP();
-      const issueResult = await mcpClients.jira?.callTool({ name: 'jira_get_issue', arguments: { issue_key: issueKey } });
-      const issueText = (issueResult?.content as Array<{text:string}>)?.[0]?.text ?? '';
-      if (issueText) issueContext = issueText.slice(0, 3000);
-    } catch { /* continue without live data */ }
   }
 
   // ── 2. Retrieve KB context for this issue ────────────────────────────────────
   let kbContext = '';
   if (issueKey) {
     try {
-      const kbResults = await retrieveLocalContextForIssue(
+      const kbResults = await retrieveKBContext(
         db,
         issueKey,
         issueKey.split('-')[0],
-        undefined
+        undefined,
+        { mode: config.kbScopeMode ?? 'project', projects: config.kbScopeProjects }
       );
       if (kbResults) {
         kbContext = kbResults;
@@ -1384,7 +1375,7 @@ app.post('/api/generate', async (req, res) => {
         send({ type: 'kb_context', count: docCount, message: `KB: ${docCount} relevant docs found` });
         console.log(`  KB context: ${docCount} docs for ${issueKey}`);
       } else {
-        console.log(`  KB context: none found for ${issueKey} (run kb:local:seed to populate)`);
+        console.log(`  KB context: none found for ${issueKey} — use "Import from Zephyr" on the KB page to populate`);
       }
     } catch (e) {
       console.log(`  KB context: skipped (${e})`);
@@ -1401,17 +1392,33 @@ app.post('/api/generate', async (req, res) => {
 
   // Always prepend the server-fetched context block, regardless of whether
   // the client sent a custom prompt — the client never has the context.
+  const activePriorities = (reqPriorities?.length ? reqPriorities : null) ?? config.genPriorities ?? ['Critical', 'High'];
+  const activeTypes      = (reqTypes?.length      ? reqTypes      : null) ?? config.genTypes      ?? ['Functional', 'Regression', 'Edge Case', 'Negative', 'Security'];
+
+  // Hard override block placed at the very top of the prompt so it wins over CLAUDE.md
+  const genOverride =
+    `⚠ GENERATION CONSTRAINTS — these override anything in CLAUDE.md:\n` +
+    `• ONLY generate test cases with Priority: ${activePriorities.join(', ')}. ` +
+    `Do NOT generate any test case with a different priority level.\n` +
+    `• ONLY generate these test types: ${activeTypes.join(', ')}. ` +
+    `Do NOT include any other test types.\n\n`;
+
   const instruction = customPrompt ??
     (issueKey
       ? `Generate comprehensive test cases for Jira issue ${issueKey}. ` +
-        `Generate test cases covering all acceptance criteria, edge cases, and negative tests. ` +
+        `Cover all acceptance criteria, edge cases, and negative tests. ` +
         `Avoid duplicating any existing Zephyr tests or KB patterns listed above. ` +
         `Always number test cases starting from TC-001. ` +
         `Follow the structure in CLAUDE.md.`
       : 'Help me generate test cases.');
 
+  // Only apply the gen constraints override for auto-generation.
+  // Custom prompts (Edit / Update a specific test) should not be constrained.
+  const applyOverride = issueKey && !customPrompt;
+
   const prompt = issueKey
-    ? `IMPORTANT: Do NOT use any MCP tools, make any tool calls, or fetch any external data. ` +
+    ? (applyOverride ? genOverride : '') +
+      `IMPORTANT: Do NOT use any MCP tools, make any tool calls, or fetch any external data. ` +
       `Generate test cases directly from the context provided below.\n\n` +
       (contextBlock
         ? `${contextBlock}\n\n`
@@ -1479,22 +1486,146 @@ app.post('/api/kb/save', async (req, res) => {
   } catch (err) { res.status(500).json({ error: String(err) }); }
 });
 
-app.post('/api/kb/seed', async (_req, res) => {
+
+// ─── Zephyr → KB bulk import ─────────────────────────────────────────────────
+// Streams SSE progress. Idempotent: existing zephyr:KEY entries are skipped.
+
+app.post('/api/kb/import/zephyr', async (_req, res) => {
+  const projectKey = config.jiraProjectKey;
+  if (!projectKey) { res.status(400).json({ error: 'No Jira project key configured' }); return; }
+  if (!config.zephyrApiToken) { res.status(400).json({ error: 'Zephyr API token not configured' }); return; }
+  // PgKnowledgeBase uses Voyage-3 embeddings via Anthropic API; local KB uses TF-IDF (no key needed)
+  if (db instanceof PgKnowledgeBase && !config.anthropicApiKey && !process.env.ANTHROPIC_API_KEY) {
+    res.status(400).json({ error: 'ANTHROPIC_API_KEY required to generate embeddings for pgvector backend' }); return;
+  }
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
-  const send = (msg: string, done = false) =>
-    res.write(`data: ${JSON.stringify({ message: msg, done })}\n\n`);
+  res.setHeader('Connection', 'keep-alive');
 
-  send('Clearing KB…');
-  await db.clear();
-  const child = spawn('npx', ['tsx', 'src/local-kb/seed.ts'], { cwd: ROOT, env: process.env });
-  child.stdout.on('data', (d: Buffer) => send(d.toString().trim()));
-  child.stderr.on('data', (d: Buffer) => send(d.toString().trim()));
-  child.on('close', () => { send('Seed complete ✓', true); res.end(); });
+  const send = (message: string, done = false) =>
+    res.write(`data: ${JSON.stringify({ message, done })}\n\n`);
+
+  try {
+    // Verify the KB backend can actually accept writes before doing any work
+    if (db instanceof PgKnowledgeBase) {
+      const healthy: boolean = await (db as any).isHealthy().catch(() => false);
+      if (!healthy) {
+        send('✗ Knowledge base (PostgreSQL) is not reachable — imports cannot be saved. Check EC2 connectivity and DATABASE_URL.', true);
+        res.end(); return;
+      }
+    }
+
+    send(`Fetching all Zephyr test cases for project ${projectKey}…`);
+    const testCases = await directZephyrAllTestCases(projectKey);
+    send(`Found ${testCases.length} test case(s) in Zephyr`);
+
+    // Idempotency: collect IDs already in KB so we skip them.
+    // Match on the Zephyr key anywhere in the document ID (e.g. generated:QAP-T137:QAP-12)
+    // so we don't re-import test cases that were previously uploaded from an approval.
+    const existingIds = new Set(await db.listIds());
+    const existingZephyrKeys = new Set<string>();
+    for (const id of existingIds) {
+      const m = id.match(/([A-Z]+-T\d+)/);
+      if (m) existingZephyrKeys.add(m[1]);
+    }
+
+    // Stale-entry cleanup: if a zephyr: prefixed KB entry no longer exists in Zephyr,
+    // the test case was deleted there — remove it from KB to keep them in sync.
+    const liveZephyrKeys = new Set(testCases.map(tc => tc.key));
+    const staleIds = [...existingIds].filter(id =>
+      id.startsWith('zephyr:') && !liveZephyrKeys.has(id.slice('zephyr:'.length))
+    );
+    if (staleIds.length > 0) {
+      send(`Detected ${staleIds.length} KB entry(s) deleted from Zephyr — removing…`);
+      let cleaned = 0;
+      for (const staleId of staleIds) {
+        try {
+          await db.deleteDocument(staleId);
+          existingIds.delete(staleId);
+          const key = staleId.slice('zephyr:'.length);
+          existingZephyrKeys.delete(key);
+          cleaned++;
+        } catch (e) {
+          console.warn(`[KB import] failed to remove stale entry ${staleId}:`, e);
+        }
+      }
+      send(`Removed ${cleaned} stale KB entry(s)`);
+    }
+
+    const toImport = testCases.filter(tc =>
+      !existingIds.has(`zephyr:${tc.key}`) && !existingZephyrKeys.has(tc.key)
+    );
+    const skippedCount = testCases.length - toImport.length;
+
+    if (skippedCount > 0) send(`Skipping ${skippedCount} already-imported test case(s)`);
+    if (toImport.length === 0) {
+      send('Nothing new to import — all Zephyr test cases are already in the KB', true);
+      res.end(); return;
+    }
+
+    send(`Importing ${toImport.length} new test case(s)…`);
+
+    let imported = 0, errors = 0;
+    for (const tc of toImport) {
+      try {
+        const doc = formatZephyrDocument(tc);
+        await db.addDocument(doc);
+        imported++;
+        if (imported % 10 === 0 || imported === toImport.length) {
+          send(`Progress: ${imported} / ${toImport.length}`);
+        }
+      } catch (e: any) {
+        errors++;
+        console.warn(`[KB import] failed for ${tc.key}:`, e);
+        send(`✗ ${tc.key}: ${e.message ?? String(e)}`);
+      }
+    }
+
+    send(
+      `✓ Import complete — ${imported} imported, ${skippedCount} skipped${errors ? `, ${errors} error(s)` : ''}`,
+      true,
+    );
+  } catch (e: any) {
+    send(`Error: ${e.message ?? String(e)}`, true);
+  }
+  res.end();
 });
 
 app.delete('/api/kb/clear', async (_req, res) => {
   await db.clear(); res.json({ ok: true });
+});
+
+// Returns distinct project keys present in the KB — used to populate the scope selector
+app.get('/api/kb/projects', async (_req, res) => {
+  try {
+    let projects: string[] = [];
+    if (db instanceof PgKnowledgeBase) {
+      const rows: Array<{ pk: string }> = await (db as any).sql`
+        SELECT DISTINCT metadata->>'project_key' AS pk
+        FROM   kb_documents
+        WHERE  metadata->>'project_key' IS NOT NULL
+          AND  metadata->>'project_key' != ''
+        ORDER  BY pk
+      `;
+      projects = rows.map(r => r.pk);
+    } else {
+      // Local KB: extract from document IDs (format: source:PROJ-NNN:...)
+      const ids = await db.listIds();
+      const seen = new Set<string>();
+      for (const id of ids) {
+        const parts = id.split(':');
+        if (parts.length >= 2) {
+          const proj = parts[1].split('-')[0];
+          if (proj) seen.add(proj);
+        }
+      }
+      projects = [...seen].sort();
+    }
+    res.json({ projects });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── Approval page (shareable link for teammates) ────────────────────────────
@@ -1514,9 +1645,13 @@ app.get('/approve/:id', (req, res) => {
 
 // API: get approval data for the approval page
 app.get('/api/approvals/:id/data', async (req, res) => {
-  const apr = await approvalStore.load(req.params.id);
-  if (!apr) return res.status(404).json({ error: 'Approval request not found' });
-  res.json(apr);
+  try {
+    const apr = await approvalStore.load(req.params.id);
+    if (!apr) return res.status(404).json({ error: 'Approval request not found' });
+    res.json(apr);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 
@@ -1533,12 +1668,11 @@ const SERVER_IP = process.env.SERVER_IP ?? '10.105.217.140';
 
 httpServer.listen(Number(PORT), HOST, async () => {
   console.log(`\n${'━'.repeat(58)}`);
-  console.log(`  Selfridges Test Management Agent`);
+  console.log(`  Selfridges Test Curator Agent`);
   console.log('━'.repeat(58));
   console.log(`  Local:   http://localhost:${PORT}`);
   console.log(`  Network: http://${SERVER_IP}:${PORT}  ← share with teammates`);
   console.log('━'.repeat(58));
-  syncMCPJson();
 
   const cc = await checkClaudeCode();
   if (cc.available) {
@@ -1547,6 +1681,4 @@ httpServer.listen(Number(PORT), HOST, async () => {
     console.log(`  ⚠ Claude Code not found — run: claude login`);
   }
   console.log('━'.repeat(58) + '\n');
-
-  if (config.mode === 'mock') connectMCP().catch(e => console.error('MCP connect error:', e));
 });

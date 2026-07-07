@@ -204,7 +204,7 @@ main{flex:1;max-width:820px;margin:0 auto;width:100%;padding:28px 28px 80px}
 <header>
   <div style="display:flex;flex-direction:column">
     <span class="wordmark">Selfridges</span>
-    <span class="tagline">Test Management</span>
+    <span class="tagline">Test Curator</span>
   </div>
   <div class="vline"></div>
   <span class="ikey" id="hdrKey">…</span>
@@ -260,7 +260,7 @@ function render(){
   document.getElementById('hdrTitle').textContent=apr.issueSummary||'';
   const b=document.getElementById('hdrStatus');
   b.textContent=apr.status;b.className='sbadge '+apr.status;
-  document.title='Review: '+apr.issueKey+' — Selfridges Test Management';
+  document.title='Review: '+apr.issueKey+' — Selfridges Test Curator';
   // Info box
   document.getElementById('infoBox').innerHTML=[
     ii('Requested by',apr.requestedBy),

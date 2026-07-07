@@ -24,8 +24,7 @@ export const api = {
   status: () => req<ServerStatus>('GET', '/api/status'),
   getConfig: () => req<UIConfig>('GET', '/api/config'),
   setConfig: (c: Partial<UIConfig>) => req<{ ok: boolean }>('POST', '/api/config', c),
-  connect: () => req<{ ok: boolean }>('POST', '/api/connect'),
-  checkClaudeCode: () => req<{ available: boolean; version?: string }>('GET', '/api/claudecode/check'),
+checkClaudeCode: () => req<{ available: boolean; version?: string }>('GET', '/api/claudecode/check'),
   debug: () => req<Record<string, unknown>>('GET', '/api/debug'),
 
   // Jira
@@ -41,10 +40,9 @@ export const api = {
   // KB
   kbStats: () => req<KBStats>('GET', '/api/kb/stats'),
   kbList: () => req<string[]>('GET', '/api/kb/list'),
+  kbProjects: () => req<{ projects: string[] }>('GET', '/api/kb/projects'),
   kbSave: (content: string, issueKey: string, approvedBy: string) =>
     req<{ ok: boolean; stats: KBStats }>('POST', '/api/kb/save', { content, issueKey, approvedBy }),
-  kbClear: () => req<{ ok: boolean }>('DELETE', '/api/kb/clear'),
-  kbSeedStream: (): EventSource => new EventSource('/api/kb/seed'),
 
   // Approvals
   approvals: () => req<ApprovalRequest[]>('GET', '/api/approvals'),
@@ -69,6 +67,16 @@ export const api = {
     fetch('/api/test/confluence').then(r => r.json()) as Promise<{ ok: boolean; detail?: string; error?: string }>,
   testZephyr: () =>
     fetch('/api/test/zephyr').then(r => r.json()) as Promise<{ ok: boolean; detail?: string; error?: string }>,
+  testDb: () =>
+    fetch('/api/test/db').then(r => r.json()) as Promise<{
+      ok: boolean;
+      steps?: Array<{ label: string; ok: boolean; detail?: string }>;
+      error?: string;
+    }>,
+
+  // Generation options
+  getGenOptions: () => req<GenOptions>('GET', '/api/gen-options'),
+  setGenOptions: (o: GenOptions) => req<{ ok: boolean }>('POST', '/api/gen-options', o),
 
   // Generate (SSE stream)
   generateStream: (issueKey: string | undefined, prompt: string): EventSource => {
@@ -77,12 +85,21 @@ export const api = {
   },
 }
 
+export interface GenOptions {
+  priorities: string[]
+  types: string[]
+}
+
 // Generate returns a ReadableStream (POST + SSE)
-export async function* generateStream(issueKey: string | undefined, prompt: string, issueDetail?: unknown) {
+export async function* generateStream(issueKey: string | undefined, prompt: string, issueDetail?: unknown, genOptions?: GenOptions) {
   const res = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issueKey, prompt, issueDetail }),
+    body: JSON.stringify({
+      issueKey, prompt, issueDetail,
+      genPriorities: genOptions?.priorities,
+      genTypes:      genOptions?.types,
+    }),
   })
   if (!res.ok) throw new Error(await res.text())
   if (!res.body) throw new Error('No response body')
